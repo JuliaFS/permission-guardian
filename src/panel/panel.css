@@ -1,0 +1,12 @@
+.guardian-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 300px;
+  background: #111;
+  color: white;
+  padding: 15px;
+  border-radius: 10px;
+  z-index: 999999;
+  font-family: sans-serif;
+}

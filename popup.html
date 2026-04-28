@@ -1,12 +1,22 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Permission Guardian</title>
-</head>
-<body>
-  <h3>🛡️ Permission Guardian</h3>
-  <p>Status: Active</p>
-
-  <script src="popup.js"></script>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Permission Guardian</title>
+    <style>
+      html,
+      body {
+        width: 320px;
+        height: 240px;
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/popup/main.tsx"></script>
+  </body>
 </html>
