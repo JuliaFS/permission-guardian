@@ -6,8 +6,30 @@
   background: #111;
   color: white;
   padding: 15px;
+  padding-top: 14px;
   border-radius: 10px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
   z-index: 999999;
   font-family: sans-serif;
 }
 
+.guardian-panel__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.guardian-panel__close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

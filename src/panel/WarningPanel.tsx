@@ -2,13 +2,31 @@ import type { RiskSignal } from "../engine/types";
 
 export function WarningPanel({
   level,
-  signals
+  signals,
+  onClose,
+  showCloseButton,
 }: {
   level: string;
   signals: RiskSignal[];
+  onClose: () => void;
+  showCloseButton: boolean;
 }) {
   return (
     <div className="guardian-panel">
+      {showCloseButton ? (
+        <button
+          type="button"
+          className="guardian-panel__close"
+          aria-label="Close Permission Guardian panel"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }}
+        >
+          ×
+        </button>
+      ) : null}
       <h3>🛡️ Permission Guardian</h3>
 
       <p>
