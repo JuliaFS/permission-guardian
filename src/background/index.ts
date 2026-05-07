@@ -217,12 +217,29 @@ runtime?.onMessage?.addListener((message: any, sender: any, sendResponse: any) =
     handleActivityLog(message.payload)
   } else if (message.type === 'PG_INJECT_PERMISSION_PROXY') {
     const tabId = sender?.tab?.id
+    const tabUrl = sender?.tab?.url
     if (typeof tabId === 'number') {
-      scripting?.executeScript?.({
-        target: { tabId },
-        world: 'MAIN',
-        func: permissionProxyMain,
-      })
+      if (isRestrictedTabUrl(tabUrl)) {
+        showNotAccessibleNotice(typeof tabUrl === 'string' ? tabUrl : undefined)
+        return
+      }
+
+      try {
+        const result = scripting?.executeScript?.({
+          target: { tabId },
+          world: 'MAIN',
+          func: permissionProxyMain,
+        })
+
+        // MV3: returns a Promise when no callback is provided.
+        if (result && typeof (result as any).catch === 'function') {
+          ;(result as any).catch(() => {
+            showNotAccessibleNotice(typeof tabUrl === 'string' ? tabUrl : undefined)
+          })
+        }
+      } catch {
+        showNotAccessibleNotice(typeof tabUrl === 'string' ? tabUrl : undefined)
+      }
     }
   } else if (message.type === 'GET_DASHBOARD_DATA') {
     handleGetDashboardData().then(sendResponse)
