@@ -39,8 +39,7 @@ export function analyzeWebsite(url: string): RiskSignal[] {
   // - Levenshtein distance or other string similarity algorithms
   // - Homoglyph detection (e.g., using Unicode characters that look similar)
   // For this example, we'll use a very basic check for common typos.
-  const popularDomains = ["google.com", "facebook.com", "amazon.com", "microsoft.com", "apple.com"];
-  const commonTypos = {
+  const commonTypos: Record<string, string> = {
     "g00gle.com": "google.com",
     "faceb00k.com": "facebook.com",
     "amzon.com": "amazon.com",

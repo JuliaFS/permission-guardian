@@ -4,6 +4,7 @@ import { calculateRisk } from '../engine/riskScorer'
 import { analyzeUrl } from '../engine/urlAnalyzer'
 import { injectPanel } from '../panel/injectPanel'
 import { initExtensionActivityTracker } from '../engine/extensionActivityTracker'
+import { initPermissionTracker } from '../engine/permissionTracker'
 
 if (window.top !== window.self) {
   // Avoid injecting into iframes.

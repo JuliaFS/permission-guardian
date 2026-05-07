@@ -3,116 +3,30 @@
  * Tracked permissions: Camera, Microphone, Location, Notifications, Clipboard, and Popups.
  */
 export function initPermissionTracker() {
-  // 1. Inject proxy script into the MAIN world to intercept native APIs
-  // This is necessary because content scripts run in an isolated world and cannot 
-  // directly see/modify objects in the page's JS context.
-  const script = document.createElement('script');
-  script.textContent = `
-    (function() {
-      const notify = (permission, action = 'requested', responseTime = null) => {
-        window.postMessage({ 
-          type: 'PG_PERMISSION_REQUEST', 
-          permission, 
-          action,
-          origin: window.location.origin,
-          responseTime
-        }, '*');
-      };
+  const runtime =
+    (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
+  const storage =
+    (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
 
-      const wrapPromise = (permission, originalFn, context) => {
-        return function(...args) {
-          const start = Date.now();
-          notify(permission, 'requested');
-          const p = originalFn.apply(context, args);
-          if (p && typeof p.then === 'function') {
-            p.then(() => notify(permission, 'allowed', Date.now() - start)).catch(() => {});
-          }
-          return p;
-        };
-      };
+  // 1) Ask the background service worker to inject the proxy into the MAIN world
+  // using `chrome.scripting.executeScript`. This avoids CSP violations on sites that
+  // block inline `<script>` execution.
+  runtime?.sendMessage?.({ type: 'PG_INJECT_PERMISSION_PROXY' });
 
-      // Camera & Microphone
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-        navigator.mediaDevices.getUserMedia = function(constraints) {
-          const type = constraints?.video && constraints?.audio ? 'camera+microphone' : (constraints?.video ? 'camera' : 'microphone');
-          const start = Date.now();
-          notify(type, 'requested');
-          const p = originalGetUserMedia(constraints);
-          p.then(() => notify(type, 'allowed', Date.now() - start)).catch(() => {});
-          return p;
-        };
-      }
-
-      // Location
-      if (navigator.geolocation) {
-        const origGCP = navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
-        navigator.geolocation.getCurrentPosition = function(s, e, o) {
-          const start = Date.now();
-          notify('location', 'requested');
-          return origGCP((pos) => { notify('location', 'allowed', Date.now() - start); if(s) s(pos); }, e, o);
-        };
-        const origWP = navigator.geolocation.watchPosition.bind(navigator.geolocation);
-        navigator.geolocation.watchPosition = function(s, e, o) {
-          const start = Date.now();
-          notify('location', 'requested');
-          return origWP((pos) => { notify('location', 'allowed', Date.now() - start); if(s) s(pos); }, e, o);
-        };
-      }
-
-      // Notifications
-      if (window.Notification && Notification.requestPermission) {
-        Notification.requestPermission = wrapPromise('notifications', Notification.requestPermission, Notification);
-      }
-
-      // Clipboard
-      if (navigator.clipboard) {
-        navigator.clipboard.readText = wrapPromise('clipboard access', navigator.clipboard.readText, navigator.clipboard);
-        navigator.clipboard.writeText = wrapPromise('clipboard access', navigator.clipboard.writeText, navigator.clipboard);
-      }
-
-      // Popups / Redirects
-      const originalOpen = window.open.bind(window);
-      window.open = function(url, target, features) {
-        notify('popup', 'requested');
-        const win = originalOpen(url, target, features);
-        if (win) notify('popup', 'allowed');
-        return win;
-      };
-
-      // Cookie Access Detection
-      const originalCookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') || 
-                                       Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
-      if (originalCookieDescriptor && originalCookieDescriptor.get) {
-        Object.defineProperty(document, 'cookie', {
-          get: function() {
-            notify('cookie read', 'allowed');
-            return originalCookieDescriptor.get.call(this);
-          },
-          set: function(val) {
-            return originalCookieDescriptor.set.call(this, val);
-          }
-        });
-      }
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
-  script.remove();
-
-  // 2. Listen for messages from the injected script
+  // 2) Listen for messages from the injected proxy
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.type !== 'PG_PERMISSION_REQUEST') return;
     
     const { permission, action, origin, responseTime } = event.data;
     
     // Send to background for persistent logging and analysis
-    chrome.runtime.sendMessage({
+    runtime?.sendMessage?.({
       type: 'LOG_PERMISSION_REQUEST',
       payload: { permission, action, origin, timestamp: Date.now(), responseTime }
     });
 
-    chrome.storage.local.get(['pg_mode'], (result) => {
-      const mode = result.pg_mode || 'balanced';
+    storage?.get?.(['pg_mode'], (result: any) => {
+      const mode = result?.pg_mode || 'balanced';
       if (mode === 'silent' || action !== 'requested') return;
 
       const HIGH_RISK = ['camera', 'microphone', 'camera+microphone', 'location', 'clipboard access'];

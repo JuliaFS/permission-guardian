@@ -2,7 +2,7 @@
   position: fixed;
   top: 20px;
   right: 20px;
-  width: 360px;
+  width: 720px;
   max-width: calc(100vw - 40px);
   background: #0f1115;
   color: #f2f4f8;
@@ -13,6 +13,23 @@
     Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.guardian-panel button {
+  font: inherit;
+}
+
+.guardian-panel__tabs button {
+  background: #ffffff;
+  color: #111827;
+}
+
+.guardian-panel__dashboard button {
+  color: #111827;
+}
+
+.guardian-panel__learn button {
+  color: #111827;
 }
 
 .guardian-panel h3 {

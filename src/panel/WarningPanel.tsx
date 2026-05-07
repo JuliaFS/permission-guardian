@@ -3,6 +3,36 @@ import type { RiskSignal } from "../engine/types";
 import { QUIZ_QUESTIONS, BADGE_DEFINITIONS } from "../engine/learningEngine";
 import "./panel.css";
 
+const runtime =
+  (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime;
+const storage =
+  (globalThis as any).chrome?.storage?.local ??
+  (globalThis as any).browser?.storage?.local;
+
+type ExtensionSummaryItem = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  hasActivity: boolean;
+  riskScore: number;
+  lastUsed?: number;
+};
+
+type SitePermissionItem = {
+  origin: string;
+  permissions: string[];
+};
+
+type DashboardData = {
+  extensionSummary: ExtensionSummaryItem[];
+  sitePermissions: SitePermissionItem[];
+};
+
+type ExtensionActivityItem = {
+  type: "extension_injection" | "network_request" | "data_access" | (string & {});
+  detail: string;
+};
+
 type Education = {
   title: string;
   why: string[];
@@ -278,26 +308,23 @@ export function WarningPanel({
     habits: string[];
     suggestions: string[];
   };
-  extensionActivity?: any[];
+  extensionActivity?: ExtensionActivityItem[];
   onClose: () => void;
   showCloseButton: boolean;
 }) {
   const [view, setView] = useState<'signals' | 'dashboard' | 'learn'>('signals');
-  const [dashboardData, setDashboardData] = useState<{
-    extensionSummary: any[];
-    sitePermissions: any[];
-  } | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);
   const [quizIdx, setQuizIdx] = useState(0);
   const [quizFeedback, setQuizFeedback] = useState<string | null>(null);
   const [mode, setMode] = useState<'strict' | 'balanced' | 'silent'>('balanced');
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_DASHBOARD_DATA' }, (response: any) => {
+    runtime?.sendMessage?.({ type: 'GET_DASHBOARD_DATA' }, (response: any) => {
       if (response) setDashboardData(response);
     });
 
-    chrome.storage.local.get(['unlockedBadges', 'pg_mode'], (result: any) => {
+    storage?.get?.(['unlockedBadges', 'pg_mode'], (result: any) => {
       let badges = result.unlockedBadges || ['guardian_initiate'];
       if (behavior && behavior.score > 90 && !badges.includes('privacy_pro')) {
         badges.push('privacy_pro');
@@ -308,16 +335,16 @@ export function WarningPanel({
   }, []);
 
   const removeExtension = (id: string) => {
-    chrome.runtime.sendMessage({ type: 'REMOVE_EXTENSION', id });
+    runtime?.sendMessage?.({ type: 'REMOVE_EXTENSION', id });
   };
 
   const revokeSite = (origin: string) => {
-    chrome.runtime.sendMessage({ type: 'CLEAR_SITE_DATA', origin });
+    runtime?.sendMessage?.({ type: 'CLEAR_SITE_DATA', origin });
   };
 
   const changeMode = (m: 'strict' | 'balanced' | 'silent') => {
     setMode(m);
-    chrome.storage.local.set({ pg_mode: m });
+    storage?.set?.({ pg_mode: m });
   };
 
   const handleQuizAnswer = (idx: number) => {
@@ -327,7 +354,7 @@ export function WarningPanel({
       if (!unlockedBadges.includes('eagle_eye')) {
         const next = [...unlockedBadges, 'eagle_eye'];
         setUnlockedBadges(next);
-        chrome.storage.local.set({ unlockedBadges: next });
+        storage?.set?.({ unlockedBadges: next });
       }
     } else {
       setQuizFeedback("❌ Incorrect. " + question.explanation);
@@ -369,21 +396,21 @@ export function WarningPanel({
         <button 
           className={`guardian-panel__tab ${view === 'signals' ? 'active' : ''}`}
           onClick={() => setView('signals')}
-          style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px' }}
+          style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#fff', color: '#111' }}
         >
           Live Analysis
         </button>
         <button 
           className={`guardian-panel__tab ${view === 'dashboard' ? 'active' : ''}`}
           onClick={() => setView('dashboard')}
-          style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px' }}
+          style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#fff', color: '#111' }}
         >
           Dashboard
         </button>
         <button 
           className={`guardian-panel__tab ${view === 'learn' ? 'active' : ''}`}
           onClick={() => setView('learn')}
-          style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px' }}
+          style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#fff', color: '#111' }}
         >
           Learn
         </button>
@@ -416,7 +443,8 @@ export function WarningPanel({
                 style={{ 
                   display: 'block', width: '100%', textAlign: 'left', 
                   marginBottom: '5px', padding: '6px', fontSize: '12px',
-                  cursor: 'pointer', borderRadius: '4px', border: '1px solid #ccc'
+                  cursor: 'pointer', borderRadius: '4px', border: '1px solid #ccc',
+                  background: '#fff', color: '#111'
                 }}
               >
                 {opt}
@@ -482,6 +510,7 @@ export function WarningPanel({
           </h4>
           <div style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '12px', background: '#fff', borderRadius: '8px', padding: '8px', border: '1px solid #eee' }}>
             {dashboardData?.extensionSummary
+              .slice()
               .sort((a, b) => b.riskScore - a.riskScore)
               .map((ext) => {
                 const cat = getRiskCategory(ext.riskScore);
@@ -513,7 +542,7 @@ export function WarningPanel({
                 </div>
                 <button 
                   onClick={() => revokeSite(site.origin)}
-                  style={{ background: 'none', border: '1px solid #ccc', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }}
+                  style={{ background: 'none', border: '1px solid #ccc', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px', color: '#111' }}
                 >
                   Revoke
                 </button>
@@ -523,12 +552,10 @@ export function WarningPanel({
         </div>
       ) : (
         <>
-           <p>
-    Overall Risk: <strong>{overall.level}</strong>{" "}
-    <span className="guardian-panel__subtle">
-      (score {overall.score})
-    </span>
-  </p>
+          <p>
+            Overall Risk: <strong>{overall.level}</strong>{" "}
+            <span className="guardian-panel__subtle">(score {overall.score})</span>
+          </p>
       
       <p className="guardian-panel__subtle">
         Page: <strong>{page.level}</strong> (score {page.score}) · Extension:{" "}
@@ -657,7 +684,8 @@ export function WarningPanel({
             );
           })}
         </div>
-      </div>
+      )}
+        </>
       )}
     </div>
   );

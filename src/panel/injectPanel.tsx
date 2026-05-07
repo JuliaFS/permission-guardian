@@ -12,52 +12,75 @@ export async function injectPanel(
   signals: { page: RiskSignal[]; extension: RiskSignal[] }, // Renamed from 'pageSignals' to 'signals.page' for clarity
   options?: { showCloseButton?: boolean },
 ) {
+  const runtime =
+    (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
   const storage = (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
-  const behaviorMetrics = await analyzeBehavior()
-  const activityData = await storage?.get(['pg_extension_activity'])
-  const activityLogs = activityData?.pg_extension_activity || []
 
-  const existing = document.getElementById('guardian-root')
-  if (existing) existing.remove()
+  try {
+    const behaviorMetrics = await analyzeBehavior()
+    const activityData = await storage?.get(['pg_extension_activity'])
+    const activityLogs = activityData?.pg_extension_activity || []
 
-  const container = document.createElement('div')
-  container.id = 'guardian-root'
-  document.body.appendChild(container)
+    const existing = document.getElementById('guardian-root')
+    if (existing) existing.remove()
 
-  const root = createRoot(container)
+    const container = document.createElement('div')
+    container.id = 'guardian-root'
+    document.body.appendChild(container)
 
-  const close = () => {
-    document.removeEventListener('pointerdown', onDocumentPointerDown, true)
-    document.removeEventListener('keydown', onDocumentKeyDown, true)
-    root.unmount()
-    container.remove()
+    const shadowRoot = container.attachShadow({ mode: 'open' })
+
+    const cssHref = runtime?.getURL?.('panel.css')
+    if (cssHref) {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = cssHref
+      shadowRoot.appendChild(link)
+    }
+
+    const mount = document.createElement('div')
+    shadowRoot.appendChild(mount)
+
+    const root = createRoot(mount)
+
+    const close = () => {
+      document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+      document.removeEventListener('keydown', onDocumentKeyDown, true)
+      root.unmount()
+      container.remove()
+    }
+
+    const onDocumentPointerDown = (event: Event) => {
+      const path = (event as any).composedPath?.() as EventTarget[] | undefined
+      if (path && path.includes(container)) return
+
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (container.contains(target)) return
+      close()
+    }
+
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+
+    document.addEventListener('pointerdown', onDocumentPointerDown, true)
+    document.addEventListener('keydown', onDocumentKeyDown, true)
+
+    root.render(
+      <WarningPanel
+        overall={result.overall}
+        page={result.page}
+        extension={result.extension}
+        pageSignals={signals.page}
+        extensionSignals={signals.extension}
+        behavior={behaviorMetrics}
+        extensionActivity={activityLogs}
+        onClose={close}
+        showCloseButton={options?.showCloseButton ?? false}
+      />,
+    )
+  } catch (error) {
+    console.error('Permission Guardian: Error injecting panel:', error);
   }
-
-  const onDocumentPointerDown = (event: Event) => {
-    const target = event.target
-    if (!(target instanceof Node)) return
-    if (container.contains(target)) return
-    close()
-  }
-
-  const onDocumentKeyDown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') close()
-  }
-
-  document.addEventListener('pointerdown', onDocumentPointerDown, true)
-  document.addEventListener('keydown', onDocumentKeyDown, true)
-
-  root.render(
-    <WarningPanel
-      overall={result.overall}
-      page={result.page}
-      extension={result.extension}
-      pageSignals={signals.page}
-      extensionSignals={signals.extension}
-      behavior={behaviorMetrics}
-      extensionActivity={activityLogs}
-      onClose={close}
-      showCloseButton={options?.showCloseButton ?? false}
-    />,
-  )
 }

@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "Permission Guardian",
   "version": "1.0.0",
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["activeTab", "scripting", "notifications"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "assets/background.js",
     "type": "module"
@@ -31,7 +32,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/*.js", "assets/chunks/*.js", "assets/*.css", "assets/*.svg", "assets/*.png"],
+      "resources": ["panel.css", "assets/*.js", "assets/chunks/*.js", "assets/*.css", "assets/*.svg", "assets/*.png"],
       "matches": ["<all_urls>"]
     }
   ]

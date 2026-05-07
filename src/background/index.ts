@@ -19,25 +19,212 @@ type InstallLog = {
   id: string
 }
 
-const action =
-  (globalThis as any).chrome?.action ?? (globalThis as any).browser?.action
-const tabs = (globalThis as any).chrome?.tabs ?? (globalThis as any).browser?.tabs
 const storage = (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
 const management = (globalThis as any).chrome?.management ?? (globalThis as any).browser?.management
 const webRequest = (globalThis as any).chrome?.webRequest ?? (globalThis as any).browser?.webRequest
+const action = (globalThis as any).chrome?.action ?? (globalThis as any).browser?.action
+const tabs = (globalThis as any).chrome?.tabs ?? (globalThis as any).browser?.tabs
+const scripting = (globalThis as any).chrome?.scripting ?? (globalThis as any).browser?.scripting
+const pgNotifications =
+  (globalThis as any).chrome?.notifications ?? (globalThis as any).browser?.notifications
 
 const LOG_STORAGE_KEY = 'pg_permission_history'
 const INSTALL_LOG_KEY = 'pg_install_history'
 const ACTIVITY_LOG_KEY = 'pg_extension_activity'
 const LAST_USED_KEY = 'pg_extension_last_used'
 
-runtime?.onMessage?.addListener((message: any) => {
+function isRestrictedTabUrl(url: unknown) {
+  if (typeof url !== 'string') return true
+  const lower = url.toLowerCase()
+  if (
+    lower.startsWith('chrome://') ||
+    lower.startsWith('chrome-extension://') ||
+    lower.startsWith('edge://') ||
+    lower.startsWith('about:') ||
+    lower.startsWith('view-source:')
+  ) {
+    return true
+  }
+  if (lower.startsWith('https://chrome.google.com/webstore')) return true
+  if (lower.startsWith('https://chromewebstore.google.com')) return true
+  return false
+}
+
+function showNotAccessibleNotice(url?: string) {
+  const message =
+    url && isRestrictedTabUrl(url)
+      ? 'This is a restricted browser page. Permission Guardian can’t run here.'
+      : 'Permission Guardian can’t access this tab.'
+
+  pgNotifications?.create?.({
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: 'Permission Guardian',
+    message,
+    priority: 0,
+  })
+}
+
+action?.onClicked?.addListener((tab: any) => {
+  const tabId = tab?.id
+  if (typeof tabId !== 'number') return
+
+  const url = tab?.url
+  if (isRestrictedTabUrl(url)) {
+    showNotAccessibleNotice(url)
+    return
+  }
+
+  tabs?.sendMessage?.(tabId, { type: 'PG_TOGGLE_PANEL' }, () => {
+    const lastError =
+      (globalThis as any).chrome?.runtime?.lastError ??
+      (globalThis as any).browser?.runtime?.lastError
+    if (lastError) {
+      showNotAccessibleNotice(typeof url === 'string' ? url : undefined)
+    }
+  })
+})
+
+function permissionProxyMain() {
+  const w = window as any
+  if (w.__pgPermissionProxyInstalled) return
+  w.__pgPermissionProxyInstalled = true
+
+  const notify = (permission: string, action: 'requested' | 'allowed' = 'requested', responseTime: number | null = null) => {
+    window.postMessage(
+      {
+        type: 'PG_PERMISSION_REQUEST',
+        permission,
+        action,
+        origin: window.location.origin,
+        responseTime,
+      },
+      '*',
+    )
+  }
+
+  const wrapPromise = (permission: string, originalFn: any, context: any) => {
+    return function (...args: any[]) {
+      const start = Date.now()
+      notify(permission, 'requested')
+      const p = originalFn.apply(context, args)
+      if (p && typeof p.then === 'function') {
+        p.then(() => notify(permission, 'allowed', Date.now() - start)).catch(() => {})
+      }
+      return p
+    }
+  }
+
+  // Camera & Microphone
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+    navigator.mediaDevices.getUserMedia = function (constraints: any) {
+      const type =
+        constraints?.video && constraints?.audio
+          ? 'camera+microphone'
+          : constraints?.video
+            ? 'camera'
+            : 'microphone'
+      const start = Date.now()
+      notify(type, 'requested')
+      const p = originalGetUserMedia(constraints)
+      p.then(() => notify(type, 'allowed', Date.now() - start)).catch(() => {})
+      return p
+    }
+  }
+
+  // Location
+  if ((navigator as any).geolocation) {
+    const geo: any = (navigator as any).geolocation
+    const origGCP = geo.getCurrentPosition.bind(geo)
+    geo.getCurrentPosition = function (s: any, e: any, o: any) {
+      const start = Date.now()
+      notify('location', 'requested')
+      return origGCP(
+        (pos: any) => {
+          notify('location', 'allowed', Date.now() - start)
+          if (s) s(pos)
+        },
+        e,
+        o,
+      )
+    }
+    const origWP = geo.watchPosition.bind(geo)
+    geo.watchPosition = function (s: any, e: any, o: any) {
+      const start = Date.now()
+      notify('location', 'requested')
+      return origWP(
+        (pos: any) => {
+          notify('location', 'allowed', Date.now() - start)
+          if (s) s(pos)
+        },
+        e,
+        o,
+      )
+    }
+  }
+
+  // Notifications
+  if ((window as any).Notification && (window as any).Notification.requestPermission) {
+    ;(window as any).Notification.requestPermission = wrapPromise(
+      'notifications',
+      (window as any).Notification.requestPermission,
+      (window as any).Notification,
+    )
+  }
+
+  // Clipboard
+  if ((navigator as any).clipboard) {
+    const cb: any = (navigator as any).clipboard
+    if (cb.readText) cb.readText = wrapPromise('clipboard access', cb.readText, cb)
+    if (cb.writeText) cb.writeText = wrapPromise('clipboard access', cb.writeText, cb)
+  }
+
+  // Popups / Redirects
+  if (window.open) {
+    const originalOpen = window.open.bind(window)
+    window.open = function (url?: string | URL, target?: string, features?: string) {
+      notify('popup', 'requested')
+      const win = originalOpen(url as any, target as any, features as any)
+      if (win) notify('popup', 'allowed')
+      return win
+    }
+  }
+
+  // Cookie access detection (read-only)
+  const originalCookieDescriptor =
+    Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
+    Object.getOwnPropertyDescriptor((HTMLDocument as any).prototype, 'cookie')
+  if (originalCookieDescriptor && originalCookieDescriptor.get) {
+    Object.defineProperty(document, 'cookie', {
+      get: function () {
+        notify('cookie read', 'allowed')
+        return originalCookieDescriptor.get!.call(this)
+      },
+      set: function (val) {
+        return originalCookieDescriptor.set!.call(this, val)
+      },
+    })
+  }
+}
+
+runtime?.onMessage?.addListener((message: any, sender: any, sendResponse: any) => {
   if (message.type === 'LOG_PERMISSION_REQUEST') {
     handlePermissionLog(message.payload)
   } else if (message.type === 'LOG_EXTENSION_ACTIVITY') {
     handleActivityLog(message.payload)
+  } else if (message.type === 'PG_INJECT_PERMISSION_PROXY') {
+    const tabId = sender?.tab?.id
+    if (typeof tabId === 'number') {
+      scripting?.executeScript?.({
+        target: { tabId },
+        world: 'MAIN',
+        func: permissionProxyMain,
+      })
+    }
   } else if (message.type === 'GET_DASHBOARD_DATA') {
-    return handleGetDashboardData().then(message.callback || (() => {}));
+    handleGetDashboardData().then(sendResponse)
+    return true
   } else if (message.type === 'REMOVE_EXTENSION') {
     management?.uninstall(message.id);
   } else if (message.type === 'CLEAR_SITE_DATA') {
@@ -152,9 +339,9 @@ async function handlePermissionLog(log: PermissionLog) {
   if (log.action === 'requested' && log.permission === 'camera+microphone') {
     const isKnown = history.some(h => h.origin === log.origin && h.action === 'allowed')
     if (!isKnown) {
-      (globalThis as any).chrome?.notifications?.create({
+      pgNotifications?.create?.({
         type: 'basic',
-        iconUrl: '/icon128.png',
+        iconUrl: 'icons/icon128.png',
         title: '🚨 Suspicious Permission Request',
         message: `${log.origin} requested both camera and microphone but is not a previously trusted domain.`,
         priority: 2
@@ -186,16 +373,4 @@ async function handlePermissionLog(log: PermissionLog) {
   }
 }
 
-function badgeForLevel(level: string): { text: string; color: string } {
-  switch (level) {
-    case 'CRITICAL':
-      return { text: 'CRT', color: '#7f1d1d' }
-    case 'HIGH':
-      return { text: 'HIGH', color: '#b91c1c' }
-    case 'MEDIUM':
-      return { text: 'MED', color: '#b45309' }
-    case 'LOW':
-    default:
-      return { text: 'LOW', color: '#064e3b' }
-  }
-}
+// (badgeForLevel removed - unused)
