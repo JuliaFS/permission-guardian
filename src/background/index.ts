@@ -56,9 +56,11 @@ function showNotAccessibleNotice(url?: string) {
       ? 'This is a restricted browser page. Permission Guardian can’t run here.'
       : 'Permission Guardian can’t access this tab.'
 
+  const iconUrl = runtime?.getURL?.('icons/icon128.png') ?? 'icons/icon128.png'
+
   pgNotifications?.create?.({
     type: 'basic',
-    iconUrl: 'icons/icon128.png',
+    iconUrl,
     title: 'Permission Guardian',
     message,
     priority: 0,
@@ -339,9 +341,10 @@ async function handlePermissionLog(log: PermissionLog) {
   if (log.action === 'requested' && log.permission === 'camera+microphone') {
     const isKnown = history.some(h => h.origin === log.origin && h.action === 'allowed')
     if (!isKnown) {
+      const iconUrl = runtime?.getURL?.('icons/icon128.png') ?? 'icons/icon128.png'
       pgNotifications?.create?.({
         type: 'basic',
-        iconUrl: 'icons/icon128.png',
+        iconUrl,
         title: '🚨 Suspicious Permission Request',
         message: `${log.origin} requested both camera and microphone but is not a previously trusted domain.`,
         priority: 2
