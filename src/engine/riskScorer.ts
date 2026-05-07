@@ -8,7 +8,8 @@ export function calculateRisk(signals: RiskSignal[]): {
 
   let level: RiskLevel = "LOW";
 
-  if (score > 70) level = "HIGH";
+  if (score > 120) level = "CRITICAL";
+  else if (score > 70) level = "HIGH";
   else if (score > 40) level = "MEDIUM";
 
   return { score, level };

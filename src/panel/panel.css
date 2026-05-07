@@ -2,11 +2,109 @@
   position: fixed;
   top: 20px;
   right: 20px;
-  width: 300px;
-  background: #111;
-  color: white;
-  padding: 15px;
-  border-radius: 10px;
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  background: #0f1115;
+  color: #f2f4f8;
+  padding: 14px 14px 12px;
+  border-radius: 12px;
   z-index: 999999;
-  font-family: sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+    Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.guardian-panel h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+}
+
+.guardian-panel h4 {
+  margin: 12px 0 8px;
+  font-size: 12px;
+  opacity: 0.92;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.guardian-panel p {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.guardian-panel__subtle {
+  opacity: 0.75;
+}
+
+.guardian-panel__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f4f8;
+  cursor: pointer;
+}
+
+.guardian-panel__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.guardian-panel__signals {
+  display: grid;
+  gap: 8px;
+}
+
+.guardian-panel__signal {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.guardian-panel__signalSummary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 10px 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.guardian-panel__signalSummary::-webkit-details-marker {
+  display: none;
+}
+
+.guardian-panel__signalTitle {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.guardian-panel__signalMeta {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.guardian-panel__signalBody {
+  padding: 0 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.guardian-panel__sectionTitle {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.guardian-panel ul {
+  margin: 0 0 8px 18px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.35;
 }
