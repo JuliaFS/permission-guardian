@@ -12,8 +12,9 @@ export async function injectPanel(
   signals: { page: RiskSignal[]; extension: RiskSignal[] }, // Renamed from 'pageSignals' to 'signals.page' for clarity
   options?: { showCloseButton?: boolean },
 ) {
-  const runtime =
-    (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
+  const runtime = (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
+  if (!runtime?.id) return
+
   const storage = (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
 
   try {
@@ -30,13 +31,16 @@ export async function injectPanel(
 
     const shadowRoot = container.attachShadow({ mode: 'open' })
 
-    const cssHref = runtime?.getURL?.('panel.css')
-    if (cssHref) {
-      const link = document.createElement('link')
-      link.rel = 'stylesheet'
-      link.href = cssHref
-      shadowRoot.appendChild(link)
-    }
+    // The panel.css is injected by Chrome via manifest.json into the main document.
+    // Shadow DOM by default inherits styles from the host document.
+    // Dynamically loading it here is redundant and can cause issues.
+    // const cssHref = runtime?.getURL?.('panel.css')
+    // if (cssHref) {
+    //   const link = document.createElement('link')
+    //   link.rel = 'stylesheet'
+    //   link.href = cssHref
+    //   shadowRoot.appendChild(link)
+    // }
 
     const mount = document.createElement('div')
     shadowRoot.appendChild(mount)

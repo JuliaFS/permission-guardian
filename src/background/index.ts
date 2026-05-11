@@ -1,98 +1,183 @@
-const runtime =
-  (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
+// background/index.ts
 
-runtime?.onInstalled?.addListener(() => {
-  // eslint-disable-next-line no-console
-  console.log('Permission Guardian installed')
-})
+const browserApi = (globalThis as any).chrome ?? (globalThis as any).browser
 
-type PermissionLog = {
-  permission: string
-  origin: string
-  timestamp: number
-  action: 'requested' | 'allowed'
-  responseTime?: number
-}
+const runtime = browserApi?.runtime
+const storage = browserApi?.storage?.local
+const management = browserApi?.management
+const webRequest = browserApi?.webRequest
+const action = browserApi?.action
+const tabs = browserApi?.tabs
+const scripting = browserApi?.scripting
+const notifications = browserApi?.notifications
 
-type InstallLog = {
-  timestamp: number
-  id: string
-}
-
-const storage = (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
-const management = (globalThis as any).chrome?.management ?? (globalThis as any).browser?.management
-const webRequest = (globalThis as any).chrome?.webRequest ?? (globalThis as any).browser?.webRequest
-const action = (globalThis as any).chrome?.action ?? (globalThis as any).browser?.action
-const tabs = (globalThis as any).chrome?.tabs ?? (globalThis as any).browser?.tabs
-const scripting = (globalThis as any).chrome?.scripting ?? (globalThis as any).browser?.scripting
-const pgNotifications =
-  (globalThis as any).chrome?.notifications ?? (globalThis as any).browser?.notifications
+const WEEK_MS = 1000 * 60 * 60 * 24 * 7
+const MAX_PERMISSION_HISTORY = 1000
 
 const LOG_STORAGE_KEY = 'pg_permission_history'
 const INSTALL_LOG_KEY = 'pg_install_history'
 const ACTIVITY_LOG_KEY = 'pg_extension_activity'
 const LAST_USED_KEY = 'pg_extension_last_used'
 
+type PermissionAction = 'requested' | 'allowed'
+
+interface PermissionLog {
+  permission: string
+  origin: string
+  timestamp: number
+  action: PermissionAction
+  responseTime?: number
+}
+
+interface InstallLog {
+  timestamp: number
+  id: string
+}
+
+interface ExtensionActivity {
+  type: string
+  extensionId?: string
+  detail?: string
+  timestamp: number
+  origin?: string
+}
+
+const restrictedProtocols = [
+  'chrome://',
+  'chrome-extension://',
+  'edge://',
+  'about:',
+  'view-source:',
+  'moz-extension://',
+  'devtools://',
+]
+
+const notificationCooldown = new Map<string, number>()
+
+function canNotify(key: string, cooldownMs = 30000) {
+  const now = Date.now()
+  const last = notificationCooldown.get(key) ?? 0
+
+  if (now - last < cooldownMs) {
+    return false
+  }
+
+  notificationCooldown.set(key, now)
+  return true
+}
+
 function isRestrictedTabUrl(url: unknown) {
   if (typeof url !== 'string') return true
+
   const lower = url.toLowerCase()
-  if (
-    lower.startsWith('chrome://') ||
-    lower.startsWith('chrome-extension://') ||
-    lower.startsWith('edge://') ||
-    lower.startsWith('about:') ||
-    lower.startsWith('view-source:')
-  ) {
+
+  if (restrictedProtocols.some(protocol => lower.startsWith(protocol))) {
     return true
   }
-  if (lower.startsWith('https://chrome.google.com/webstore')) return true
-  if (lower.startsWith('https://chromewebstore.google.com')) return true
+
+  if (lower.startsWith('https://chrome.google.com/webstore')) {
+    return true
+  }
+
+  if (lower.startsWith('https://chromewebstore.google.com')) {
+    return true
+  }
+
   return false
+}
+
+async function getStorageValue<T>(key: string, fallback: T): Promise<T> {
+  try {
+    if (!storage) return fallback
+
+    const result = await storage.get([key])
+
+    return result[key] ?? fallback
+  } catch (error) {
+    console.error(`[Permission Guardian] Failed reading ${key}`, error)
+    return fallback
+  }
+}
+
+async function setStorageValue(key: string, value: unknown) {
+  try {
+    if (!storage) return
+
+    await storage.set({
+      [key]: value,
+    })
+  } catch (error) {
+    console.error(`[Permission Guardian] Failed writing ${key}`, error)
+  }
+}
+
+function showNotification(title: string, message: string, priority = 0) {
+  const iconUrl =
+    runtime?.getURL?.('icons/icon128.png') ?? 'icons/icon128.png'
+
+  notifications?.create?.({
+    type: 'basic',
+    iconUrl,
+    title,
+    message,
+    priority,
+  })
 }
 
 function showNotAccessibleNotice(url?: string) {
   const message =
     url && isRestrictedTabUrl(url)
-      ? 'This is a restricted browser page. Permission Guardian can’t run here.'
-      : 'Permission Guardian can’t access this tab.'
+      ? 'This is a restricted browser page. Permission Guardian cannot run here.'
+      : 'Permission Guardian cannot access this tab.'
 
-  const iconUrl = runtime?.getURL?.('icons/icon128.png') ?? 'icons/icon128.png'
-
-  pgNotifications?.create?.({
-    type: 'basic',
-    iconUrl,
-    title: 'Permission Guardian',
-    message,
-    priority: 0,
-  })
+  showNotification('Permission Guardian', message)
 }
+
+runtime?.onInstalled?.addListener(() => {
+  console.log('[Permission Guardian] Installed')
+})
 
 action?.onClicked?.addListener((tab: any) => {
   const tabId = tab?.id
+
   if (typeof tabId !== 'number') return
 
   const url = tab?.url
+
   if (isRestrictedTabUrl(url)) {
     showNotAccessibleNotice(url)
     return
   }
 
-  tabs?.sendMessage?.(tabId, { type: 'PG_TOGGLE_PANEL' }, () => {
-    const lastError =
-      (globalThis as any).chrome?.runtime?.lastError ??
-      (globalThis as any).browser?.runtime?.lastError
-    if (lastError) {
-      showNotAccessibleNotice(typeof url === 'string' ? url : undefined)
-    }
-  })
+  tabs?.sendMessage?.(
+    tabId,
+    {
+      type: 'PG_TOGGLE_PANEL',
+    },
+    () => {
+      const lastError = runtime?.lastError
+
+      if (lastError) {
+        showNotAccessibleNotice(url)
+      }
+    },
+  )
 })
 
 function permissionProxyMain() {
-  const w = window as any
-  if (w.__pgPermissionProxyInstalled) return
-  w.__pgPermissionProxyInstalled = true
+  const INSTALL_FLAG = Symbol.for('pg.permission.proxy')
 
-  const notify = (permission: string, action: 'requested' | 'allowed' = 'requested', responseTime: number | null = null) => {
+  const w = window as any
+
+  if (w[INSTALL_FLAG]) return
+
+  w[INSTALL_FLAG] = true
+
+  const notify = (
+    permission: string,
+    action: 'requested' | 'allowed' = 'requested',
+    responseTime: number | null = null,
+  ) => {
     window.postMessage(
       {
         type: 'PG_PERMISSION_REQUEST',
@@ -105,292 +190,474 @@ function permissionProxyMain() {
     )
   }
 
-  const wrapPromise = (permission: string, originalFn: any, context: any) => {
+  const wrapPromise = (
+    permission: string,
+    originalFn: (...args: any[]) => Promise<any>,
+    context: any,
+  ) => {
     return function (...args: any[]) {
       const start = Date.now()
+
       notify(permission, 'requested')
-      const p = originalFn.apply(context, args)
-      if (p && typeof p.then === 'function') {
-        p.then(() => notify(permission, 'allowed', Date.now() - start)).catch(() => {})
+
+      const promise = originalFn.apply(context, args)
+
+      if (promise && typeof promise.then === 'function') {
+        promise
+          .then(() => {
+            notify(permission, 'allowed', Date.now() - start)
+          })
+          .catch((error: unknown) => {
+            console.debug(
+              '[Permission Guardian] Permission denied',
+              error,
+            )
+          })
       }
-      return p
+
+      return promise
     }
   }
 
-  // Camera & Microphone
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
-    navigator.mediaDevices.getUserMedia = function (constraints: any) {
-      const type =
-        constraints?.video && constraints?.audio
-          ? 'camera+microphone'
-          : constraints?.video
-            ? 'camera'
-            : 'microphone'
-      const start = Date.now()
-      notify(type, 'requested')
-      const p = originalGetUserMedia(constraints)
-      p.then(() => notify(type, 'allowed', Date.now() - start)).catch(() => {})
-      return p
-    }
+  if (navigator.mediaDevices?.getUserMedia) {
+    const originalGetUserMedia =
+      navigator.mediaDevices.getUserMedia.bind(
+        navigator.mediaDevices,
+      )
+
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      configurable: true,
+      writable: true,
+      value(constraints: MediaStreamConstraints) {
+        const type =
+          constraints.video && constraints.audio
+            ? 'camera+microphone'
+            : constraints.video
+              ? 'camera'
+              : 'microphone'
+
+        const start = Date.now()
+
+        notify(type, 'requested')
+
+        const promise = originalGetUserMedia(constraints)
+
+        promise
+          .then(() => {
+            notify(type, 'allowed', Date.now() - start)
+          })
+          .catch((error: unknown) => {
+            console.debug(error)
+          })
+
+        return promise
+      },
+    })
   }
 
-  // Location
-  if ((navigator as any).geolocation) {
-    const geo: any = (navigator as any).geolocation
-    const origGCP = geo.getCurrentPosition.bind(geo)
-    geo.getCurrentPosition = function (s: any, e: any, o: any) {
+  if (navigator.geolocation) {
+    const geo = navigator.geolocation
+
+    const originalGetCurrentPosition =
+      geo.getCurrentPosition.bind(geo)
+
+    geo.getCurrentPosition = function (
+      success,
+      error,
+      options,
+    ) {
       const start = Date.now()
+
       notify('location', 'requested')
-      return origGCP(
-        (pos: any) => {
+
+      return originalGetCurrentPosition(
+        position => {
           notify('location', 'allowed', Date.now() - start)
-          if (s) s(pos)
+
+          success(position)
         },
-        e,
-        o,
+        error,
+        options,
       )
     }
-    const origWP = geo.watchPosition.bind(geo)
-    geo.watchPosition = function (s: any, e: any, o: any) {
+
+    const originalWatchPosition =
+      geo.watchPosition.bind(geo)
+
+    geo.watchPosition = function (
+      success,
+      error,
+      options,
+    ) {
       const start = Date.now()
+
       notify('location', 'requested')
-      return origWP(
-        (pos: any) => {
+
+      return originalWatchPosition(
+        position => {
           notify('location', 'allowed', Date.now() - start)
-          if (s) s(pos)
+
+          success(position)
         },
-        e,
-        o,
+        error,
+        options,
       )
     }
   }
 
-  // Notifications
-  if ((window as any).Notification && (window as any).Notification.requestPermission) {
-    ;(window as any).Notification.requestPermission = wrapPromise(
+  if (
+    'Notification' in window &&
+    window.Notification.requestPermission
+  ) {
+    window.Notification.requestPermission = wrapPromise(
       'notifications',
-      (window as any).Notification.requestPermission,
-      (window as any).Notification,
+      window.Notification.requestPermission,
+      window.Notification,
     )
   }
 
-  // Clipboard
-  if ((navigator as any).clipboard) {
-    const cb: any = (navigator as any).clipboard
-    if (cb.readText) cb.readText = wrapPromise('clipboard access', cb.readText, cb)
-    if (cb.writeText) cb.writeText = wrapPromise('clipboard access', cb.writeText, cb)
-  }
+  if (navigator.clipboard) {
+    const clipboard = navigator.clipboard as any
 
-  // Popups / Redirects
-  if (window.open) {
-    const originalOpen = window.open.bind(window)
-    window.open = function (url?: string | URL, target?: string, features?: string) {
-      notify('popup', 'requested')
-      const win = originalOpen(url as any, target as any, features as any)
-      if (win) notify('popup', 'allowed')
-      return win
+    if (clipboard.readText) {
+      clipboard.readText = wrapPromise(
+        'clipboard access',
+        clipboard.readText,
+        clipboard,
+      )
+    }
+
+    if (clipboard.writeText) {
+      clipboard.writeText = wrapPromise(
+        'clipboard access',
+        clipboard.writeText,
+        clipboard,
+      )
     }
   }
 
-  // Cookie access detection (read-only)
-  const originalCookieDescriptor =
-    Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
-    Object.getOwnPropertyDescriptor((HTMLDocument as any).prototype, 'cookie')
-  if (originalCookieDescriptor && originalCookieDescriptor.get) {
-    Object.defineProperty(document, 'cookie', {
-      get: function () {
+  if (window.open) {
+    const originalOpen = window.open.bind(window)
+
+    window.open = function (
+      url?: string | URL,
+      target?: string,
+      features?: string,
+    ) {
+      notify('popup', 'requested')
+
+      const popup = originalOpen(
+        url as any,
+        target,
+        features,
+      )
+
+      if (popup) {
+        notify('popup', 'allowed')
+      }
+
+      return popup
+    }
+  }
+
+  const cookieDescriptor =
+    Object.getOwnPropertyDescriptor(
+      Document.prototype,
+      'cookie',
+    ) ??
+    Object.getOwnPropertyDescriptor(
+      HTMLDocument.prototype,
+      'cookie',
+    )
+
+  if (cookieDescriptor?.get) {
+    Object.defineProperty(Document.prototype, 'cookie', {
+      configurable: true,
+
+      get() {
         notify('cookie read', 'allowed')
-        return originalCookieDescriptor.get!.call(this)
+
+        return cookieDescriptor.get?.call(this)
       },
-      set: function (val) {
-        return originalCookieDescriptor.set!.call(this, val)
+
+      set(value: string) {
+        return cookieDescriptor.set?.call(this, value)
       },
     })
   }
 }
 
-runtime?.onMessage?.addListener((message: any, sender: any, sendResponse: any) => {
-  if (message.type === 'LOG_PERMISSION_REQUEST') {
-    handlePermissionLog(message.payload)
-  } else if (message.type === 'LOG_EXTENSION_ACTIVITY') {
-    handleActivityLog(message.payload)
-  } else if (message.type === 'PG_INJECT_PERMISSION_PROXY') {
-    const tabId = sender?.tab?.id
-    const tabUrl = sender?.tab?.url
-    if (typeof tabId === 'number') {
-      if (isRestrictedTabUrl(tabUrl)) {
-        showNotAccessibleNotice(typeof tabUrl === 'string' ? tabUrl : undefined)
-        return
-      }
-
-      try {
-        const result = scripting?.executeScript?.({
-          target: { tabId },
-          world: 'MAIN',
-          func: permissionProxyMain,
-        })
-
-        // MV3: returns a Promise when no callback is provided.
-        if (result && typeof (result as any).catch === 'function') {
-          ;(result as any).catch(() => {
-            showNotAccessibleNotice(typeof tabUrl === 'string' ? tabUrl : undefined)
-          })
-        }
-      } catch {
-        showNotAccessibleNotice(typeof tabUrl === 'string' ? tabUrl : undefined)
-      }
+runtime?.onMessage?.addListener(
+  (
+    message: any,
+    sender: any,
+    sendResponse: (response?: any) => void,
+  ) => {
+    if (message.type === 'LOG_PERMISSION_REQUEST') {
+      handlePermissionLog(message.payload)
     }
-  } else if (message.type === 'GET_DASHBOARD_DATA') {
-    handleGetDashboardData().then(sendResponse)
-    return true
-  } else if (message.type === 'REMOVE_EXTENSION') {
-    management?.uninstall(message.id);
-  } else if (message.type === 'CLEAR_SITE_DATA') {
-    handleClearSiteData(message.origin);
-  }
-})
 
-async function handleActivityLog(activity: any) {
-  if (!storage) return
-  const result = await storage.get([ACTIVITY_LOG_KEY, LAST_USED_KEY])
-  const history = result[ACTIVITY_LOG_KEY] || []
-  const lastUsed = result[LAST_USED_KEY] || {}
+    else if (message.type === 'LOG_EXTENSION_ACTIVITY') {
+      handleActivityLog(message.payload)
+    }
 
-  history.push(activity)
-  
-  if (activity.extensionId) {
-    lastUsed[activity.extensionId] = Date.now();
-  }
+    else if (message.type === 'PG_INJECT_PERMISSION_PROXY') {
+      injectPermissionProxy(sender)
+    }
 
-  // Keep last 100 activities
-  await storage.set({ 
-    [ACTIVITY_LOG_KEY]: history.slice(-100),
-    [LAST_USED_KEY]: lastUsed
-  })
-}
+    else if (message.type === 'GET_DASHBOARD_DATA') {
+      handleGetDashboardData().then(sendResponse)
+      return true
+    }
 
-async function handleGetDashboardData() {
-  if (!storage || !management) return null;
+    else if (message.type === 'REMOVE_EXTENSION') {
+      management?.uninstall?.(message.id)
+    }
 
-  const [extensions, data] = await Promise.all([
-    management.getAll(),
-    storage.get([LOG_STORAGE_KEY, ACTIVITY_LOG_KEY, LAST_USED_KEY])
-  ]);
-
-  const permHistory: PermissionLog[] = data[LOG_STORAGE_KEY] || [];
-  const activity: any[] = data[ACTIVITY_LOG_KEY] || [];
-  const lastUsed = data[LAST_USED_KEY] || {};
-
-  // Group permissions by site
-  const siteMap = new Map<string, Set<string>>();
-  permHistory.filter(h => h.action === 'allowed').forEach(h => {
-    if (!siteMap.has(h.origin)) siteMap.set(h.origin, new Set());
-    siteMap.get(h.origin)?.add(h.permission);
-  });
-
-  const sitePermissions = Array.from(siteMap.entries()).map(([origin, perms]) => ({
-    origin,
-    permissions: Array.from(perms)
-  }));
-
-  // Map extensions to risk levels (simulated scoring)
-  const extensionSummary = extensions.map((ext: any) => {
-    const hasActivity = activity.some(a => a.extensionId === ext.id);
-    return {
-      id: ext.id,
-      name: ext.name,
-      enabled: ext.enabled,
-      hasActivity,
-      lastUsed: lastUsed[ext.id] || null,
-      riskScore: ext.permissions.length * 10, // Basic heuristic
-      version: ext.version
-    };
-  });
-
-  return { extensionSummary, sitePermissions };
-}
-
-async function handleClearSiteData(origin: string) {
-  if (!storage) return;
-  const result = await storage.get([LOG_STORAGE_KEY]);
-  const history: PermissionLog[] = result[LOG_STORAGE_KEY] || [];
-  const filtered = history.filter(h => h.origin !== origin);
-  await storage.set({ [LOG_STORAGE_KEY]: filtered });
-}
-
-management?.onInstalled?.addListener((info: any) => {
-  handleInstallLog(info.id)
-})
-
-async function handleInstallLog(id: string) {
-  if (!storage) return
-  const result = await storage.get([INSTALL_LOG_KEY])
-  const history: InstallLog[] = result[INSTALL_LOG_KEY] || []
-  history.push({ timestamp: Date.now(), id })
-  await storage.set({ [INSTALL_LOG_KEY]: history.filter(h => h.timestamp > Date.now() - 7 * 24 * 60 * 60 * 1000) })
-}
-
-// Advanced: Monitor network requests from extensions
-webRequest?.onBeforeRequest.addListener(
-  (details: any) => {
-    if (details.initiator?.startsWith('chrome-extension://')) {
-      const extensionId = details.initiator.split('//')[1].split('/')[0]
-      handleActivityLog({
-        type: 'network_request',
-        extensionId,
-        detail: `Request to: ${new URL(details.url).hostname}`,
-        timestamp: Date.now(),
-        origin: 'Background context'
-      })
+    else if (message.type === 'CLEAR_SITE_DATA') {
+      handleClearSiteData(message.origin)
     }
   },
-  { urls: ['<all_urls>'] }
 )
 
-async function handlePermissionLog(log: PermissionLog) {
-  if (!storage) return
+async function injectPermissionProxy(sender: any) {
+  const tabId = sender?.tab?.id
+  const tabUrl = sender?.tab?.url
 
-  const result = await storage.get([LOG_STORAGE_KEY])
-  const history: PermissionLog[] = result[LOG_STORAGE_KEY] || []
-  
-  // Detect suspicious combos: Camera + microphone + unknown domain
-  if (log.action === 'requested' && log.permission === 'camera+microphone') {
-    const isKnown = history.some(h => h.origin === log.origin && h.action === 'allowed')
-    if (!isKnown) {
-      const iconUrl = runtime?.getURL?.('icons/icon128.png') ?? 'icons/icon128.png'
-      pgNotifications?.create?.({
-        type: 'basic',
-        iconUrl,
-        title: '🚨 Suspicious Permission Request',
-        message: `${log.origin} requested both camera and microphone but is not a previously trusted domain.`,
-        priority: 2
-      })
+  if (typeof tabId !== 'number') return
+
+  if (isRestrictedTabUrl(tabUrl)) {
+    showNotAccessibleNotice(tabUrl)
+    return
+  }
+
+  try {
+    const injectOptions: any = {
+      target: { tabId },
+      func: permissionProxyMain,
+    }
+
+    if (browserApi?.chrome) {
+      injectOptions.world = 'MAIN'
+    }
+
+    await scripting?.executeScript?.(injectOptions)
+  } catch (error) {
+    console.error(error)
+    showNotAccessibleNotice(tabUrl)
+  }
+}
+
+async function handleActivityLog(
+  activity: ExtensionActivity,
+) {
+  const history = await getStorageValue<ExtensionActivity[]>(
+    ACTIVITY_LOG_KEY,
+    [],
+  )
+
+  const lastUsed = await getStorageValue<
+    Record<string, number>
+  >(LAST_USED_KEY, {})
+
+  history.push(activity)
+
+  if (history.length > 100) {
+    history.splice(0, history.length - 100)
+  }
+
+  if (activity.extensionId) {
+    lastUsed[activity.extensionId] = Date.now()
+  }
+
+  await setStorageValue(ACTIVITY_LOG_KEY, history)
+  await setStorageValue(LAST_USED_KEY, lastUsed)
+}
+
+async function handlePermissionLog(log: PermissionLog) {
+  const history = await getStorageValue<PermissionLog[]>(
+    LOG_STORAGE_KEY,
+    [],
+  )
+
+  if (
+    log.action === 'requested' &&
+    log.permission === 'camera+microphone'
+  ) {
+    const isKnown = history.some(
+      item =>
+        item.origin === log.origin &&
+        item.action === 'allowed',
+    )
+
+    if (!isKnown && canNotify(log.origin)) {
+      showNotification(
+        '🚨 Suspicious Permission Request',
+        `${log.origin} requested camera and microphone access.`,
+        2,
+      )
     }
   }
 
   history.push(log)
-  
-  // Keep only last week for tracking "this week" history
-  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-  const filteredHistory = history.filter((h: PermissionLog) => h.timestamp > oneWeekAgo)
-  
-  await storage.set({ [LOG_STORAGE_KEY]: filteredHistory })
+
+  const oneWeekAgo = Date.now() - WEEK_MS
+
+  const filteredHistory = history
+    .filter(item => item.timestamp > oneWeekAgo)
+    .slice(-MAX_PERMISSION_HISTORY)
+
+  await setStorageValue(
+    LOG_STORAGE_KEY,
+    filteredHistory,
+  )
 
   if (log.action === 'allowed') {
-    const count = filteredHistory.filter((h: PermissionLog) => 
-      h.origin === log.origin && h.permission === log.permission && h.action === 'allowed'
+    const count = filteredHistory.filter(
+      item =>
+        item.origin === log.origin &&
+        item.permission === log.permission &&
+        item.action === 'allowed',
     ).length
-    
-    // Feature: History log info
-    if (count >= 1) {
-       // eslint-disable-next-line no-console
-       console.log(`[Permission Guardian] History: You allowed ${log.permission} access to ${log.origin} ${count} times this week`)
-    }
+
+    console.log(
+      `[Permission Guardian] ${log.origin} allowed ${log.permission} ${count} times this week`,
+    )
   } else {
-    // eslint-disable-next-line no-console
-    console.log(`[Permission Guardian] Tracking: ${log.permission} requested by ${log.origin}`)
+    console.log(
+      `[Permission Guardian] ${log.permission} requested by ${log.origin}`,
+    )
   }
 }
 
-// (badgeForLevel removed - unused)
+async function handleInstallLog(id: string) {
+  const history = await getStorageValue<InstallLog[]>(
+    INSTALL_LOG_KEY,
+    [],
+  )
+
+  history.push({
+    timestamp: Date.now(),
+    id,
+  })
+
+  const filtered = history.filter(
+    item => item.timestamp > Date.now() - WEEK_MS,
+  )
+
+  await setStorageValue(INSTALL_LOG_KEY, filtered)
+}
+
+management?.onInstalled?.addListener(
+  (info: any) => {
+    handleInstallLog(info.id)
+  },
+)
+
+webRequest?.onBeforeRequest.addListener(
+  (details: any) => {
+    if (
+      typeof details.initiator === 'string' &&
+      details.initiator.startsWith(
+        'chrome-extension://',
+      )
+    ) {
+      const extensionId =
+        details.initiator.split('//')[1]?.split('/')[0]
+
+      let hostname = 'unknown'
+
+      try {
+        hostname = new URL(details.url).hostname
+      } catch {}
+
+      handleActivityLog({
+        type: 'network_request',
+        extensionId,
+        detail: `Request to: ${hostname}`,
+        timestamp: Date.now(),
+        origin: 'Background context',
+      })
+    }
+  },
+  {
+    urls: ['<all_urls>'],
+  },
+)
+
+async function handleGetDashboardData() {
+  if (!management) return null
+
+  const [extensions, permissionHistory, activity, lastUsed] =
+    await Promise.all([
+      management.getAll(),
+      getStorageValue<PermissionLog[]>(
+        LOG_STORAGE_KEY,
+        [],
+      ),
+      getStorageValue<ExtensionActivity[]>(
+        ACTIVITY_LOG_KEY,
+        [],
+      ),
+      getStorageValue<Record<string, number>>(
+        LAST_USED_KEY,
+        {},
+      ),
+    ])
+
+  const siteMap = new Map<string, Set<string>>()
+
+  permissionHistory
+    .filter(item => item.action === 'allowed')
+    .forEach(item => {
+      if (!siteMap.has(item.origin)) {
+        siteMap.set(item.origin, new Set())
+      }
+
+      siteMap.get(item.origin)?.add(item.permission)
+    })
+
+  const sitePermissions = Array.from(
+    siteMap.entries(),
+  ).map(([origin, permissions]) => ({
+    origin,
+    permissions: Array.from(permissions),
+  }))
+
+  const extensionSummary = extensions.map(
+    (extension: any) => {
+      const hasActivity = activity.some(
+        item => item.extensionId === extension.id,
+      )
+
+      return {
+        id: extension.id,
+        name: extension.name,
+        enabled: extension.enabled,
+        version: extension.version,
+        hasActivity,
+        lastUsed: lastUsed[extension.id] ?? null,
+        riskScore:
+          (extension.permissions?.length ?? 0) * 10,
+      }
+    },
+  )
+
+  return {
+    extensionSummary,
+    sitePermissions,
+  }
+}
+
+async function handleClearSiteData(origin: string) {
+  const history = await getStorageValue<PermissionLog[]>(
+    LOG_STORAGE_KEY,
+    [],
+  )
+
+  const filtered = history.filter(
+    item => item.origin !== origin,
+  )
+
+  await setStorageValue(LOG_STORAGE_KEY, filtered)
+}

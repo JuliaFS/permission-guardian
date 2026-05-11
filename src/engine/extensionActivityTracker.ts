@@ -4,7 +4,7 @@
 export function initExtensionActivityTracker() {
   const runtime =
     (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
-  if (!runtime?.sendMessage) return
+  if (!runtime?.id) return
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {

@@ -5,9 +5,9 @@ import { defineConfig } from 'vite'
 
 const rootDir = dirname(fileURLToPath(import.meta.url))
 
-// Build a *single-file* classic content script (no ESM `import` statements).
-// Chrome loads `content_scripts[].js` as a classic script, so code-splitting / ESM
-// imports will crash at runtime.
+// Build the content script as an ES module to enable code-splitting.
+// Reverting to IIFE format as Chrome content scripts may not fully support ESM code splitting,
+// and ensuring the output filename matches the manifest.
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -17,13 +17,18 @@ export default defineConfig({
         content: resolve(rootDir, 'src/content/index.ts'),
       },
       output: {
-        format: 'iife',
-        inlineDynamicImports: true,
-        entryFileNames: 'assets/content-module.js',
-        chunkFileNames: 'assets/chunks/[name].js',
-        assetFileNames: 'assets/[name][extname]',
+        format: 'iife', // Ensure IIFE format for content script compatibility
+        // inlineDynamicImports: true, // This option is ignored when codeSplitting is false (implicit with 'iife' format)
+        entryFileNames: 'assets/content-module.js', // Explicitly name the output file
+        assetFileNames: (assetInfo) => {
+          // Ensure panel.css is output directly to the dist folder, as specified in manifest.json
+          if (assetInfo.name === 'panel.css') {
+            return 'panel.css';
+          }
+          return 'assets/[name][extname]'; // Other assets go into 'assets/'
+        },
       },
     },
+    cssCodeSplit: true, // Explicitly enable CSS code splitting to ensure CSS is extracted
   },
 })
-

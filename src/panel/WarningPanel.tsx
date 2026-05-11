@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import type { RiskSignal } from "../engine/types";
 import { QUIZ_QUESTIONS, BADGE_DEFINITIONS } from "../engine/learningEngine";
-import "./panel.css";
 
 const runtime =
   (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime;
@@ -312,6 +311,8 @@ export function WarningPanel({
   onClose: () => void;
   showCloseButton: boolean;
 }) {
+  if (!runtime?.id) return null;
+
   const [view, setView] = useState<'signals' | 'dashboard' | 'learn'>('signals');
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);

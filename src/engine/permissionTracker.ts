@@ -5,6 +5,8 @@
 export function initPermissionTracker() {
   const runtime =
     (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
+  if (!runtime?.id) return
+
   const storage =
     (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
 
