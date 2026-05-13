@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { WarningPanel } from './WarningPanel'
-import type { RiskSignal } from '../engine/types'
+import type { RiskSignal, InjectedSignal } from '../engine/types'
 import { analyzeBehavior } from '../engine/behaviorAnalyzer'
 
 export async function injectPanel(
@@ -9,8 +9,8 @@ export async function injectPanel(
     page: { score: number; level: string }
     extension: { score: number; level: string }
   },
-  signals: { page: RiskSignal[]; extension: RiskSignal[] }, // Renamed from 'pageSignals' to 'signals.page' for clarity
-  options?: { showCloseButton?: boolean },
+  signals: { page: RiskSignal[]; extension: RiskSignal[] },
+  options?: { showCloseButton?: boolean; injectedSignals?: InjectedSignal[] },
 ) {
   const runtime = (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
   if (!runtime?.id) return
@@ -27,20 +27,20 @@ export async function injectPanel(
 
     const container = document.createElement('div')
     container.id = 'guardian-root'
+
+    // Apply fixed positioning to float in the top-right corner
+    Object.assign(container.style, {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      zIndex: '2147483647', // Ensure it stays above all other site elements
+      width: '400px',
+      maxWidth: 'calc(100vw - 40px)',
+    })
+
     document.body.appendChild(container)
 
     const shadowRoot = container.attachShadow({ mode: 'open' })
-
-    // The panel.css is injected by Chrome via manifest.json into the main document.
-    // Shadow DOM by default inherits styles from the host document.
-    // Dynamically loading it here is redundant and can cause issues.
-    // const cssHref = runtime?.getURL?.('panel.css')
-    // if (cssHref) {
-    //   const link = document.createElement('link')
-    //   link.rel = 'stylesheet'
-    //   link.href = cssHref
-    //   shadowRoot.appendChild(link)
-    // }
 
     const mount = document.createElement('div')
     shadowRoot.appendChild(mount)
@@ -80,6 +80,7 @@ export async function injectPanel(
         extensionSignals={signals.extension}
         behavior={behaviorMetrics}
         extensionActivity={activityLogs}
+        injectedSignals={options?.injectedSignals || []}
         onClose={close}
         showCloseButton={options?.showCloseButton ?? false}
       />,

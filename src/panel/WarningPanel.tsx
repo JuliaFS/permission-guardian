@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import type { RiskSignal } from "../engine/types";
+import type { RiskSignal, InjectedSignal } from "../engine/types";
 import { QUIZ_QUESTIONS, BADGE_DEFINITIONS } from "../engine/learningEngine";
+import { getEducationalContent, getSeverityColor, getSeverityBg } from "../utils/educationalContent";
 
 const runtime =
   (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime;
@@ -294,6 +295,7 @@ export function WarningPanel({
   extensionSignals,
   behavior,
   extensionActivity,
+  injectedSignals,
   onClose,
   showCloseButton,
 }: {
@@ -308,6 +310,7 @@ export function WarningPanel({
     suggestions: string[];
   };
   extensionActivity?: ExtensionActivityItem[];
+  injectedSignals?: InjectedSignal[];
   onClose: () => void;
   showCloseButton: boolean;
 }) {
@@ -366,17 +369,34 @@ export function WarningPanel({
     const list: string[] = [];
     if (behavior?.suggestions) list.push(...behavior.suggestions);
     
-    const unusedExts = dashboardData?.extensionSummary.filter(e => !e.hasActivity && e.enabled).length || 0;
+    const unusedExts = dashboardData?.extensionSummary?.filter(e => !e.hasActivity && e.enabled).length || 0;
     if (unusedExts > 0) list.push(`Remove or disable ${unusedExts} unused extensions`);
 
-    const heavySites = dashboardData?.sitePermissions.filter(s => s.permissions.length > 2).length || 0;
+    const heavySites = dashboardData?.sitePermissions?.filter(s => s.permissions.length > 2).length || 0;
     if (heavySites > 0) list.push(`Revoke excessive permissions from ${heavySites} sites`);
 
     return list;
   };
 
   return (
-    <div className="guardian-panel">
+    <div 
+      className="guardian-panel"
+      style={{
+        backgroundColor: '#ffffff',
+        borderRadius: '12px',
+        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+        border: '1px solid #e5e7eb',
+        padding: '20px',
+        width: '100%',
+        maxHeight: 'calc(95vh - 40px)',
+        overflowY: 'auto',
+        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+        color: '#111827',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative' // Needed for absolute positioning of close button
+      }}
+    >
       {showCloseButton ? (
         <button
           type="button"
@@ -386,6 +406,18 @@ export function WarningPanel({
             e.preventDefault();
             e.stopPropagation();
             onClose();
+          }}
+          style={{
+            position: 'absolute',
+            top: '12px',
+            right: '12px',
+            background: 'none',
+            border: 'none',
+            fontSize: '24px',
+            cursor: 'pointer',
+            color: '#9ca3af',
+            lineHeight: 1,
+            padding: '4px'
           }}
         >
           ×
@@ -685,6 +717,74 @@ export function WarningPanel({
             );
           })}
         </div>
+      )}
+
+      {injectedSignals && injectedSignals.length > 0 && (
+        <>
+          <h4>🔍 Real-Time Activity</h4>
+          <div className="guardian-panel__injected-signals" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+            {Array.from(new Set(injectedSignals.map(s => s.signalId)))
+              .slice(-10)
+              .map((signalId) => {
+                const signal = injectedSignals.find(s => s.signalId === signalId);
+                if (!signal) return null;
+                
+                const educationalContent = getEducationalContent(signalId);
+                if (!educationalContent) return null;
+
+                const bgColor = getSeverityBg(educationalContent.severity);
+                const textColor = getSeverityColor(educationalContent.severity);
+
+                return (
+                  <div
+                    key={signalId}
+                    style={{
+                      background: bgColor,
+                      border: `1px solid ${textColor}`,
+                      borderRadius: '6px',
+                      padding: '12px',
+                      marginBottom: '10px',
+                      fontSize: '13px',
+                      color: '#111827'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '16px', marginRight: '8px' }}>
+                        {educationalContent.icon || '⚠️'}
+                      </span>
+                      <strong style={{ color: textColor }}>
+                        {educationalContent.title}
+                      </strong>
+                      <span style={{ fontSize: '10px', marginLeft: 'auto', color: '#6b7280' }}>
+                        {educationalContent.severity.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <details style={{ marginTop: '8px' }}>
+                      <summary style={{ cursor: 'pointer', color: '#2563eb', fontSize: '12px', fontWeight: 500 }}>
+                        💡 Learn more
+                      </summary>
+                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(0,0,0,0.1)', fontSize: '12px' }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Why this matters:</div>
+                        <ul style={{ paddingLeft: '16px', margin: '0 0 10px 0' }}>
+                          {educationalContent.why.map((line, idx) => (
+                            <li key={idx} style={{ marginBottom: '4px' }}>{line}</li>
+                          ))}
+                        </ul>
+
+                        <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>What to do:</div>
+                        <ul style={{ paddingLeft: '16px', margin: 0 }}>
+                          {educationalContent.advice.map((line, idx) => (
+                            <li key={idx} style={{ marginBottom: '4px' }}>{line}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </details>
+                  </div>
+                );
+              })}
+          </div>
+        </>
       )}
         </>
       )}

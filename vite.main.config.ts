@@ -15,11 +15,13 @@ export default defineConfig({
         index: resolve(rootDir, 'index.html'),
         popup: resolve(rootDir, 'popup.html'),
         background: resolve(rootDir, 'src/background/index.ts'),
+        inject: resolve(rootDir, 'src/scripts/inject.ts'),
       },
       output: {
         entryFileNames: (chunk) => {
           if (chunk.name === 'background') return 'assets/background.js'
           if (chunk.name === 'popup') return 'assets/popup.js'
+          if (chunk.name === 'inject') return 'assets/inject.js'
           return 'assets/[name].js'
         },
         chunkFileNames: 'assets/chunks/[name].js',
@@ -28,4 +30,5 @@ export default defineConfig({
     },
   },
 })
+
 
