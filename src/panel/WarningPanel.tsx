@@ -41,25 +41,27 @@ type Education = {
 
 const EDUCATION_BY_SIGNAL_ID: Record<string, Education> = {
   ext_host_all_urls: {
-    title: "Runs on all websites (<all_urls>)",
+    title: "Runs on every website",
     why: [
-      "It can execute on every site you visit, including banking, email, and internal work tools.",
-      "Even a small bug or a compromised update can impact all browsing, not just one site.",
+      "This extension can work on every page you open in your browser.",
+      "That means it sees all sites, including your bank, email, and private accounts.",
+      "If the extension has a bug or becomes unsafe, it could affect everything you do online.",
     ],
     safer: [
-      "Prefer extensions scoped to specific sites (least privilege).",
-      "If an extension needs broad access, make sure it’s from a highly trusted publisher and actively maintained.",
+      "Use extensions that only run on sites you choose.",
+      "Only keep extensions with this access if you really trust them.",
     ],
   },
   ext_background_service_worker: {
-    title: "Has background code (service worker)",
+    title: "Background code runs even when the page is closed",
     why: [
-      "Background code can run outside a specific page and react to browser events.",
-      "That can be used for helpful automation, but also for tracking or data collection if misused.",
+      "This extension can keep working quietly in the background.",
+      "That means it can act without you opening a page first.",
+      "If it does too much, it may collect data or do things you did not expect.",
     ],
     safer: [
-      "Review what permissions it has together with background capabilities.",
-      "Be extra careful with broad host access + background together.",
+      "Only use extensions with background code if you understand why they need it.",
+      "Remove extensions you don’t use often.",
     ],
   },
   ext_background_persistent: {
@@ -100,18 +102,21 @@ const EDUCATION_BY_SIGNAL_ID: Record<string, Education> = {
   ext_perm_history: {
     title: "Permission: history",
     why: [
-      "Your history can expose health, finance, work, and personal interests.",
-      "History access can be combined with profiling and tracking.",
+      "The extension can see the websites you have visited before.",
+      "This can reveal your interests, work, and personal life.",
     ],
-    safer: ["Avoid granting this unless the extension is a history/search tool you explicitly want."],
+    safer: ["Only allow this if the extension clearly needs it for its task."],
   },
   ext_perm_activeTab: {
-    title: "Permission: activeTab",
+    title: "Access to the active tab",
     why: [
-      "This is safer than blanket host access, but still powerful on the tab you click the extension on.",
-      "On a login or payment page, it could read page content or interact with forms.",
+      "This extension can read and change the page you are currently looking at.",
+      "If you click it on a bank or shopping page, it can see what is on that page.",
     ],
-    safer: ["Use on trusted pages; prefer site-scoped permissions where possible."],
+    safer: [
+      "Only use it on pages you trust.",
+      "If you don’t need it on a page, close the extension or disable it.",
+    ],
   },
   ext_perm_clipboardRead: {
     title: "Permission: clipboardRead",
@@ -130,12 +135,15 @@ const EDUCATION_BY_SIGNAL_ID: Record<string, Education> = {
     safer: ["Double-check pasted content on sensitive actions (payments, logins, recovery codes)."],
   },
   ext_perm_scripting: {
-    title: "Permission: scripting",
+    title: "Can run extra code on pages",
     why: [
-      "Allows injecting code into pages, which can read what’s on the page and interact with the DOM.",
-      "Combined with broad host access, it can affect many sites.",
+      "This extension can add its own code to the page you visit.",
+      "That means it could read what you type, click, or see on the page.",
     ],
-    safer: ["Prefer extensions that inject only on specific sites and have minimal permissions."],
+    safer: [
+      "Only allow scripting for extensions you trust completely.",
+      "Avoid giving this permission to unknown extensions.",
+    ],
   },
   password_field: {
     title: "Password input detected",
@@ -275,8 +283,14 @@ function getEducation(signal: RiskSignal): Education {
   return (
     EDUCATION_BY_SIGNAL_ID[signal.id] ?? {
       title: signal.message,
-      why: ["This pattern is commonly associated with scams, data theft, or unwanted tracking."],
-      safer: ["Verify the domain and avoid entering sensitive data until you trust the page."],
+      why: [
+        "This is a warning about something the extension thinks is risky.",
+        "It may not be dangerous by itself, but it is worth paying attention to.",
+      ],
+      safer: [
+        "If you do not understand why this is happening, close the page or leave the site.",
+        "Only share personal information on sites you trust.",
+      ],
     }
   );
 }
@@ -657,28 +671,35 @@ export function WarningPanel({
           {extensionSignals.map((s) => {
             const education = getEducation(s);
             return (
-              <details key={s.id} className="guardian-panel__signal" open={extensionSignals.length === 1}>
-                <summary className="guardian-panel__signalSummary">
-                  <span className="guardian-panel__signalTitle">{education.title}</span>
-                  <span className="guardian-panel__signalMeta">
+              <div key={s.id} className="guardian-panel__signal" style={{ marginBottom: '12px' }}>
+                <div style={{ paddingBottom: '8px' }}>
+                  <strong style={{ display: 'block', marginBottom: '4px', fontSize: '13px' }}>
+                    {education.title}
+                  </strong>
+                  <span style={{ fontSize: '11px', color: '#9ca3af' }}>
                     {s.category} · weight {s.weight}
                   </span>
-                </summary>
-                <div className="guardian-panel__signalBody">
-                  <div className="guardian-panel__sectionTitle">Why this can be risky</div>
-                  <ul>
-                    {education.why.map((line, idx) => (
-                      <li key={idx}>{line}</li>
-                    ))}
-                  </ul>
-                  <div className="guardian-panel__sectionTitle">Safer next step</div>
-                  <ul>
-                    {education.safer.map((line, idx) => (
-                      <li key={idx}>{line}</li>
-                    ))}
-                  </ul>
                 </div>
-              </details>
+                <details>
+                  <summary style={{ cursor: 'pointer', color: '#2563eb', fontSize: '12px', fontWeight: 500 }}>
+                    💡 Learn more
+                  </summary>
+                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(0,0,0,0.1)', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Why this can be risky:</div>
+                    <ul style={{ paddingLeft: '16px', margin: '0 0 10px 0' }}>
+                      {education.why.map((line, idx) => (
+                        <li key={idx} style={{ marginBottom: '4px' }}>{line}</li>
+                      ))}
+                    </ul>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Safer next step:</div>
+                    <ul style={{ paddingLeft: '16px', margin: 0 }}>
+                      {education.safer.map((line, idx) => (
+                        <li key={idx} style={{ marginBottom: '4px' }}>{line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
+              </div>
             );
           })}
         </div>
@@ -686,34 +707,46 @@ export function WarningPanel({
 
       <h4>Page signals</h4>
       {pageSignals.length === 0 ? (
-        <p className="guardian-panel__subtle">No risk signals detected on this page.</p>
+        <div>
+          <p className="guardian-panel__subtle">No risk signals detected on this page.</p>
+          <p className="guardian-panel__subtle" style={{ marginTop: '4px' }}>
+            This means the page looks normal right now. Continue using the site carefully and check the panel again if it asks for permissions or data.
+          </p>
+        </div>
       ) : (
         <div className="guardian-panel__signals">
           {pageSignals.map((s) => {
             const education = getEducation(s);
             return (
-              <details key={s.id} className="guardian-panel__signal" open={pageSignals.length === 1}>
-                <summary className="guardian-panel__signalSummary">
-                  <span className="guardian-panel__signalTitle">{education.title}</span>
-                  <span className="guardian-panel__signalMeta">
+              <div key={s.id} className="guardian-panel__signal" style={{ marginBottom: '12px' }}>
+                <div style={{ paddingBottom: '8px' }}>
+                  <strong style={{ display: 'block', marginBottom: '4px', fontSize: '13px' }}>
+                    {education.title}
+                  </strong>
+                  <span style={{ fontSize: '11px', color: '#9ca3af' }}>
                     {s.category} · weight {s.weight}
                   </span>
-                </summary>
-                <div className="guardian-panel__signalBody">
-                  <div className="guardian-panel__sectionTitle">Why this can be risky</div>
-                  <ul>
-                    {education.why.map((line, idx) => (
-                      <li key={idx}>{line}</li>
-                    ))}
-                  </ul>
-                  <div className="guardian-panel__sectionTitle">Safer next step</div>
-                  <ul>
-                    {education.safer.map((line, idx) => (
-                      <li key={idx}>{line}</li>
-                    ))}
-                  </ul>
                 </div>
-              </details>
+                <details>
+                  <summary style={{ cursor: 'pointer', color: '#2563eb', fontSize: '12px', fontWeight: 500 }}>
+                    💡 Learn more
+                  </summary>
+                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid rgba(0,0,0,0.1)', fontSize: '12px' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Why this can be risky:</div>
+                    <ul style={{ paddingLeft: '16px', margin: '0 0 10px 0' }}>
+                      {education.why.map((line, idx) => (
+                        <li key={idx} style={{ marginBottom: '4px' }}>{line}</li>
+                      ))}
+                    </ul>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Safer next step:</div>
+                    <ul style={{ paddingLeft: '16px', margin: 0 }}>
+                      {education.safer.map((line, idx) => (
+                        <li key={idx} style={{ marginBottom: '4px' }}>{line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
+              </div>
             );
           })}
         </div>
@@ -722,7 +755,16 @@ export function WarningPanel({
       {injectedSignals && injectedSignals.length > 0 && (
         <>
           <h4>🔍 Real-Time Activity</h4>
-          <div className="guardian-panel__injected-signals" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+          <div
+            className="guardian-panel__injected-signals"
+            style={{
+              maxHeight: '220px',
+              minHeight: '220px',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              paddingRight: '4px',
+            }}
+          >
             {Array.from(new Set(injectedSignals.map(s => s.signalId)))
               .slice(-10)
               .map((signalId) => {
