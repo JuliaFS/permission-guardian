@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { WarningPanel } from './WarningPanel'
 import type { RiskSignal, InjectedSignal } from '../engine/types'
 import { analyzeBehavior } from '../engine/behaviorAnalyzer'
+import { extensionApi } from '../utils/extensionApi'
 
 export async function injectPanel(
   result: {
@@ -12,14 +13,11 @@ export async function injectPanel(
   signals: { page: RiskSignal[]; extension: RiskSignal[] },
   options?: { showCloseButton?: boolean; injectedSignals?: InjectedSignal[] },
 ) {
-  const runtime = (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime
-  if (!runtime?.id) return
-
-  const storage = (globalThis as any).chrome?.storage?.local ?? (globalThis as any).browser?.storage?.local
+  if (!extensionApi.isAvailable) return
 
   try {
     const behaviorMetrics = await analyzeBehavior()
-    const activityData = await storage?.get(['pg_extension_activity'])
+    const activityData = await extensionApi.getStorage(['pg_extension_activity'])
     const activityLogs = activityData?.pg_extension_activity || []
 
     const existing = document.getElementById('guardian-root')

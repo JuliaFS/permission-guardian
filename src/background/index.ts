@@ -78,7 +78,7 @@ async function injectProxy(tabId: number) {
 api.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: any) => {
   if (message.type === 'LOG_PERMISSION_REQUEST') {
     handlePermissionLog(message.payload);
-  } else if (message.type === 'UPDATE_ACTIVITY') {
+  } else if (message.type === 'UPDATE_ACTIVITY' || message.type === 'LOG_EXTENSION_ACTIVITY') {
     handleActivityLog(message.payload);
   } else if (message.type === 'GET_DASHBOARD_DATA') {
     handleGetDashboardData().then(sendResponse);

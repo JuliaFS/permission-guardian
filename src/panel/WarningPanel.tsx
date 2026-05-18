@@ -2,12 +2,7 @@ import { useState, useEffect } from "react";
 import type { RiskSignal, InjectedSignal } from "../engine/types";
 import { QUIZ_QUESTIONS, BADGE_DEFINITIONS } from "../engine/learningEngine";
 import { getEducationalContent, getSeverityColor, getSeverityBg } from "../utils/educationalContent";
-
-const runtime =
-  (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime;
-const storage =
-  (globalThis as any).chrome?.storage?.local ??
-  (globalThis as any).browser?.storage?.local;
+import { extensionApi } from "../utils/extensionApi";
 
 type ExtensionSummaryItem = {
   id: string;
@@ -108,14 +103,15 @@ const EDUCATION_BY_SIGNAL_ID: Record<string, Education> = {
     safer: ["Only allow this if the extension clearly needs it for its task."],
   },
   ext_perm_activeTab: {
-    title: "Access to the active tab",
+    title: "Access to the active tab (only after you click the extension)",
     why: [
-      "This extension can read and change the page you are currently looking at.",
-      "If you click it on a bank or shopping page, it can see what is on that page.",
+      "When you click the extension, it gets temporary permission to read or modify the page you’re currently viewing.",
+      "That means if you click it on a bank, email, or shopping page, it could see page content (and potentially change it).",
+      "This permission is lower risk than “runs on all sites”, but it’s still powerful if misused.",
     ],
     safer: [
-      "Only use it on pages you trust.",
-      "If you don’t need it on a page, close the extension or disable it.",
+      "Only click the extension on pages you trust.",
+      "If you don’t need it, don’t click it on sensitive pages (banking, payments, work tools).",
     ],
   },
   ext_perm_clipboardRead: {
@@ -263,6 +259,64 @@ const EDUCATION_BY_SIGNAL_ID: Record<string, Education> = {
     ],
     safer: ["Deny unless you explicitly want updates from a trusted news or messaging site."],
   },
+  site_cookies_present: {
+    title: "Cookies detected on this site",
+    why: [
+      "Cookies can store identifiers used for login sessions and tracking.",
+      "More cookies can mean more trackers and more data shared across visits.",
+    ],
+    safer: [
+      "Avoid logging in unless you trust the domain.",
+      "Clear site data if you don’t need to stay signed in.",
+    ],
+  },
+  site_localstorage_present: {
+    title: "LocalStorage data detected",
+    why: [
+      "LocalStorage persists data on your device and is often used for tracking and profiling.",
+      "It can store identifiers that survive browser restarts.",
+    ],
+    safer: ["Clear site storage if you don’t trust the site.", "Use privacy settings or blockers to reduce tracking."],
+  },
+  site_sessionstorage_present: {
+    title: "SessionStorage data detected",
+    why: [
+      "SessionStorage stores data for the current tab session and can still be used to track activity.",
+    ],
+    safer: ["Close the tab to clear session storage.", "Avoid entering sensitive data on suspicious sites."],
+  },
+  third_party_scripts_high: {
+    title: "Many third-party scripts loaded",
+    why: [
+      "Third-party scripts are often used for ads, analytics, and tracking.",
+      "Each extra script increases the attack surface (supply-chain risk).",
+    ],
+    safer: ["Use a tracker blocker (e.g., uBlock Origin).", "Be cautious with logins and payments on heavily scripted pages."],
+  },
+  third_party_iframes: {
+    title: "Third-party iframes embedded",
+    why: [
+      "Third-party iframes can be used for ads, widgets, and tracking pixels.",
+      "They can also be abused to deliver malicious content.",
+    ],
+    safer: ["Use a tracker blocker.", "Avoid interacting with suspicious embedded content."],
+  },
+  url_punycode: {
+    title: "Domain uses punycode (possible look‑alike)",
+    why: [
+      "Internationalized domains can use characters that look like trusted brands.",
+      "This is a common technique in phishing links.",
+    ],
+    safer: ["Double-check the domain carefully.", "Prefer navigating via bookmarks or typing the site manually."],
+  },
+  url_redirect_param: {
+    title: "Link contains a redirect parameter",
+    why: [
+      "Redirect parameters can be used to send you to a different site than you expect.",
+      "They are commonly abused in phishing and fake login flows.",
+    ],
+    safer: ["Check the final destination domain before logging in.", "If unsure, open the site directly instead of using the link."],
+  },
 };
 
 function getEducation(signal: RiskSignal): Education {
@@ -296,9 +350,10 @@ function getEducation(signal: RiskSignal): Education {
 }
 
 function getRiskCategory(score: number) {
-  if (score >= 70) return { label: 'High Risk', color: '#dc2626' };
+  // Align with RiskEngine: higher numeric score => lower risk
+  if (score >= 70) return { label: 'Low Risk', color: '#059669' };
   if (score >= 30) return { label: 'Medium Risk', color: '#b45309' };
-  return { label: 'Low Risk', color: '#059669' };
+  return { label: 'High Risk', color: '#dc2626' };
 }
 
 export function WarningPanel({
@@ -319,17 +374,16 @@ export function WarningPanel({
   pageSignals: RiskSignal[];
   extensionSignals: RiskSignal[];
   behavior?: {
-    score: number;
+    score: number | null;
     habits: string[];
     suggestions: string[];
+
   };
   extensionActivity?: ExtensionActivityItem[];
   injectedSignals?: InjectedSignal[];
   onClose: () => void;
   showCloseButton: boolean;
 }) {
-  if (!runtime?.id) return null;
-
   const [view, setView] = useState<'signals' | 'dashboard' | 'learn'>('signals');
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>([]);
@@ -338,31 +392,58 @@ export function WarningPanel({
   const [mode, setMode] = useState<'strict' | 'balanced' | 'silent'>('balanced');
 
   useEffect(() => {
-    runtime?.sendMessage?.({ type: 'GET_DASHBOARD_DATA' }, (response: any) => {
-      if (response) setDashboardData(response);
-    });
+    const fetchData = async () => {
+      const response = await extensionApi.getDashboardData();
+      if (response) {
+        // Map the background response (extensions, history, activity) to the DashboardData structure
+        const siteMap = new Map<string, Set<string>>();
+        (response.history || []).forEach((item: any) => {
+          if (!siteMap.has(item.origin)) siteMap.set(item.origin, new Set());
+          siteMap.get(item.origin)?.add(item.permission);
+        });
 
-    storage?.get?.(['unlockedBadges', 'pg_mode'], (result: any) => {
+        setDashboardData({
+          extensionSummary: (response.extensions || []).map((ext: any) => ({
+            id: ext.id,
+            name: ext.name,
+            enabled: ext.enabled,
+            riskScore: (ext.permissions?.length || 0) * 10,
+            hasActivity: (response.activity || []).some((a: any) => a.extensionId === ext.id),
+            lastUsed: response.lastUsed
+          })),
+          sitePermissions: Array.from(siteMap.entries()).map(([origin, perms]) => ({
+            origin,
+            permissions: Array.from(perms)
+          }))
+        });
+      }
+
+      const result = await extensionApi.getStorage(['unlockedBadges', 'pg_mode']);
       let badges = result.unlockedBadges || ['guardian_initiate'];
-      if (behavior && behavior.score > 90 && !badges.includes('privacy_pro')) {
+      if (behavior && typeof behavior.score === 'number' && behavior.score > 90 && !badges.includes('privacy_pro')) {
         badges.push('privacy_pro');
       }
       setUnlockedBadges(badges);
       if (result.pg_mode) setMode(result.pg_mode);
-    });
+    };
+
+    fetchData();
   }, []);
 
-  const removeExtension = (id: string) => {
-    runtime?.sendMessage?.({ type: 'REMOVE_EXTENSION', id });
+  // Fix: Move the early return after all Hooks are defined to satisfy React Rules of Hooks
+  if (!extensionApi.isAvailable) return null;
+
+  const removeExtension = async (id: string) => {
+    await extensionApi.removeExtension(id);
   };
 
-  const revokeSite = (origin: string) => {
-    runtime?.sendMessage?.({ type: 'CLEAR_SITE_DATA', origin });
+  const revokeSite = async (origin: string) => {
+    await extensionApi.clearSiteData(origin);
   };
 
   const changeMode = (m: 'strict' | 'balanced' | 'silent') => {
     setMode(m);
-    storage?.set?.({ pg_mode: m });
+    extensionApi.setStorage({ pg_mode: m });
   };
 
   const handleQuizAnswer = (idx: number) => {
@@ -372,7 +453,7 @@ export function WarningPanel({
       if (!unlockedBadges.includes('eagle_eye')) {
         const next = [...unlockedBadges, 'eagle_eye'];
         setUnlockedBadges(next);
-        storage?.set?.({ unlockedBadges: next });
+        extensionApi.setStorage({ unlockedBadges: next });
       }
     } else {
       setQuizFeedback("❌ Incorrect. " + question.explanation);
@@ -391,6 +472,45 @@ export function WarningPanel({
 
     return list;
   };
+
+  // Normalize incoming scores and derive display categories
+  const normOverallScore = Math.max(0, Math.min(100, Math.round((overall && typeof overall.score === 'number') ? overall.score : 0)));
+  const normPageScore = Math.max(0, Math.min(100, Math.round((page && typeof page.score === 'number') ? page.score : 0)));
+  const normExtensionScore = Math.max(0, Math.min(100, Math.round((extension && typeof extension.score === 'number') ? extension.score : 0)));
+  const overallCat = getRiskCategory(normOverallScore);
+  const pageCat = getRiskCategory(normPageScore);
+  const extensionCat = getRiskCategory(normExtensionScore);
+
+  const pageTopSignals = (pageSignals ?? [])
+    .slice()
+    .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0))
+    .slice(0, 3);
+  const pageMaxWeight = (pageSignals ?? []).reduce((m, s) => Math.max(m, s.weight ?? 0), 0);
+  // "Serious" should be rare and clearly justified (phishing-ish, insecure transport, password capture, etc.)
+  // Keep mild privacy/tracking findings (cookies/storage/third-party scripts) in the yellow banner.
+  const pageHasSeriousSignal = pageMaxWeight >= 50 || normPageScore < 40;
+  const pageHasAnySignal = (pageSignals ?? []).length > 0;
+
+  const pageBanner = (() => {
+    if (!pageHasAnySignal && normPageScore >= 70) return null;
+
+    const items = pageTopSignals.map((s) => s.message).filter(Boolean);
+    const highlights = items.length > 0 ? items.join(" · ") : "Some risky patterns were detected.";
+
+    if (pageHasSeriousSignal) {
+      return {
+        tone: "danger" as const,
+        title: "⚠️ This page may be harmful",
+        body: `Reason: ${highlights}`,
+      };
+    }
+
+    return {
+      tone: "warning" as const,
+      title: "⚠️ This page shows tracking or risky patterns",
+      body: `What we noticed: ${highlights}`,
+    };
+  })();
 
   return (
     <div 
@@ -442,25 +562,60 @@ export function WarningPanel({
       <div className="guardian-panel__tabs" style={{ display: 'flex', gap: '4px', marginBottom: '16px' }}>
         <button 
           className={`guardian-panel__tab ${view === 'signals' ? 'active' : ''}`}
-          onClick={() => setView('signals')}
+          onClick={(e) => { e.stopPropagation(); setView('signals'); }}
           style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#fff', color: '#111' }}
         >
           Live Analysis
         </button>
         <button 
           className={`guardian-panel__tab ${view === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setView('dashboard')}
+          onClick={(e) => { e.stopPropagation(); setView('dashboard'); }}
           style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#fff', color: '#111' }}
         >
           Dashboard
         </button>
         <button 
           className={`guardian-panel__tab ${view === 'learn' ? 'active' : ''}`}
-          onClick={() => setView('learn')}
+          onClick={(e) => { e.stopPropagation(); setView('learn'); }}
           style={{ flex: 1, padding: '4px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '4px', background: '#fff', color: '#111' }}
         >
           Learn
         </button>
+      </div>
+
+      {/* Top summary: overall score and quick status */}
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
+        <div style={{ flex: 1, background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #eef2ff' }}>
+          <div style={{ fontSize: '12px', color: '#6b7280' }}>Overall Security</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+            <div style={{ fontSize: '20px', fontWeight: '700', color: overallCat.color }}>
+              {normOverallScore}/100
+            </div>
+            <div style={{ fontSize: '13px', color: '#111827' }}>
+              <strong>{overallCat.label}</strong>
+              <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                Page: <strong>{pageCat.label} ({normPageScore})</strong> · Extension: <strong>{extensionCat.label} ({normExtensionScore})</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Prominent page warning when relevant */}
+        {pageBanner && (
+          <div
+            style={{
+              minWidth: '220px',
+              background: pageBanner.tone === 'danger' ? '#fff7f7' : '#fffbeb',
+              border: pageBanner.tone === 'danger' ? '1px solid #fee2e2' : '1px solid #fde68a',
+              color: pageBanner.tone === 'danger' ? '#7f1d1d' : '#92400e',
+              padding: '12px',
+              borderRadius: '8px',
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: '6px' }}>{pageBanner.title}</div>
+            <div style={{ fontSize: '12px' }}>{pageBanner.body}</div>
+          </div>
+        )}
       </div>
 
       {view === 'learn' ? (
@@ -542,8 +697,8 @@ export function WarningPanel({
 
           <div className="guardian-panel__scoreCard" style={{ textAlign: 'center', background: '#f9fafb', padding: '16px', borderRadius: '8px', marginBottom: '16px' }}>
              <div style={{ fontSize: '12px', color: '#6b7280' }}>Global Security Score</div>
-             <div style={{ fontSize: '32px', fontWeight: 'bold', color: (behavior?.score || 100) > 70 ? '#059669' : '#dc2626' }}>
-               {behavior?.score || 100}/100
+             <div style={{ fontSize: '32px', fontWeight: 'bold', color: (typeof behavior?.score === 'number' ? behavior.score : 100) > 70 ? '#059669' : '#6b7280' }}>
+               {typeof behavior?.score === 'number' ? `${behavior.score}/100` : '—'}
              </div>
           </div>
 
@@ -556,7 +711,7 @@ export function WarningPanel({
             📦 Extension Risk Cleanup
           </h4>
           <div style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '12px', background: '#fff', borderRadius: '8px', padding: '8px', border: '1px solid #eee' }}>
-            {dashboardData?.extensionSummary
+            {(dashboardData?.extensionSummary || [])
               .slice()
               .sort((a, b) => b.riskScore - a.riskScore)
               .map((ext) => {
@@ -581,7 +736,8 @@ export function WarningPanel({
 
           <h4 style={{ marginTop: '16px' }}>📍 Site Permissions</h4>
           <div style={{ maxHeight: '150px', overflowY: 'auto', fontSize: '12px' }}>
-            {dashboardData?.sitePermissions.map((site, i) => (
+            {/* Fix: Use a fallback to empty array to prevent crash when dashboardData is null */}
+            {(dashboardData?.sitePermissions || []).map((site, i) => (
               <div key={i} style={{ borderBottom: '1px solid #eee', padding: '6px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ maxWidth: '180px' }}>
                   <strong>{site.origin.replace('https://', '').replace('http://', '')}</strong>
@@ -600,13 +756,13 @@ export function WarningPanel({
       ) : (
         <>
           <p>
-            Overall Risk: <strong>{overall.level}</strong>{" "}
-            <span className="guardian-panel__subtle">(score {overall.score})</span>
+            Overall Risk: <strong>{overallCat.label}</strong>{" "}
+            <span className="guardian-panel__subtle">(score {normOverallScore})</span>
           </p>
       
       <p className="guardian-panel__subtle">
-        Page: <strong>{page.level}</strong> (score {page.score}) · Extension:{" "}
-        <strong>{extension.level}</strong> (score {extension.score})
+        Page: <strong>{pageCat.label}</strong> (score {normPageScore}) · Extension:{" "}
+        <strong>{extensionCat.label}</strong> (score {normExtensionScore})
       </p>
 
       <p className="guardian-panel__subtle">
@@ -617,7 +773,8 @@ export function WarningPanel({
         <div className="guardian-panel__behavior">
           <h4>🧠 Behavior Analysis</h4>
           <p>
-            Weekly Security Score: <strong>{behavior.score}/100</strong>
+            Weekly Security Score:{' '}
+            <strong>{typeof behavior.score === 'number' ? `${behavior.score}/100` : 'Not enough data yet'}</strong>
           </p>
           {behavior.habits.length > 0 && (
             <div className="guardian-panel__habits">
@@ -765,13 +922,17 @@ export function WarningPanel({
               paddingRight: '4px',
             }}
           >
-            {Array.from(new Set(injectedSignals.map(s => s.signalId)))
-              .slice(-10)
-              .map((signalId) => {
-                const signal = injectedSignals.find(s => s.signalId === signalId);
-                if (!signal) return null;
-                
-                const educationalContent = getEducationalContent(signalId);
+            {Array.from(
+              (() => {
+                const latest = new Map<string, InjectedSignal>();
+                for (const s of injectedSignals) latest.set(s.signalId, s);
+                return latest.values();
+              })(),
+            )
+              .sort((a, b) => b.timestamp - a.timestamp)
+              .slice(0, 10)
+              .map((signal) => {
+                const educationalContent = getEducationalContent(signal.signalId);
                 if (!educationalContent) return null;
 
                 const bgColor = getSeverityBg(educationalContent.severity);
@@ -779,7 +940,7 @@ export function WarningPanel({
 
                 return (
                   <div
-                    key={signalId}
+                    key={signal.signalId}
                     style={{
                       background: bgColor,
                       border: `1px solid ${textColor}`,

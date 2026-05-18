@@ -2,6 +2,7 @@ import { analyzeDOM } from "../engine/domAnalyzer";
 import { analyzeExtensionManifest } from "../engine/extensionPermissionsAnalyzer";
 import { calculateRisk } from "../engine/riskScorer";
 import { analyzeUrl } from "../engine/urlAnalyzer";
+import { analyzeWebsite } from "../engine/websiteAnalyzer";
 import { injectPanel } from "../panel/injectPanel";
 import { initExtensionActivityTracker } from "../engine/extensionActivityTracker";
 import { initPermissionTracker } from "../engine/permissionTracker";
@@ -54,8 +55,9 @@ if (window.top !== window.self) {
     function compute() {
       const url = window.location.href;
       const urlSignals = analyzeUrl(url);
+      const websiteSignals = analyzeWebsite(url);
       const domSignals = analyzeDOM();
-      const pageSignals = [...urlSignals, ...domSignals];
+      const pageSignals = [...urlSignals, ...websiteSignals, ...domSignals];
 
       const manifest = (() => {
         try {

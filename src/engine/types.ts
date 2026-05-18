@@ -1,4 +1,4 @@
-export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface RiskSignal {
   id: string;
