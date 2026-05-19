@@ -8,6 +8,7 @@
     "scripting", 
     "notifications", 
     "storage", 
+    "alarms",
     "management"
   ],
   "host_permissions": [

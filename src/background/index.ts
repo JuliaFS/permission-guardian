@@ -5,6 +5,65 @@ const MAX_PERMISSION_HISTORY = 1000;
 const LOG_STORAGE_KEY = 'pg_permission_history';
 const ACTIVITY_LOG_KEY = 'pg_extension_activity';
 const LAST_USED_KEY = 'pg_extension_last_used';
+const PHISHING_HASHES_KEY = 'pg_phishing_hashes';
+const PHISHING_LAST_UPDATE_KEY = 'pg_phishing_last_update';
+
+const DAY_MS = 1000 * 60 * 60 * 24;
+const PHISHING_UPDATE_ALARM = 'pg_update_phishing_lists';
+
+function normalizeHostname(hostname: string) {
+  return hostname.toLowerCase().replace(/^www\./, '');
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const data = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function updatePhishingListsIfNeeded(force = false) {
+  try {
+    const last = await getStorageValue<number | null>(PHISHING_LAST_UPDATE_KEY, null);
+    if (!force && typeof last === 'number' && Date.now() - last < DAY_MS) return;
+
+    // OpenPhish provides a simple text feed with one URL per line.
+    // We cache only SHA-256 hashes of hostnames to avoid storing raw domains in clear text.
+    const response = await fetch('https://openphish.com/feed.txt', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`openphish feed failed: ${response.status}`);
+    const text = await response.text();
+
+    const hostnames = new Set<string>();
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const url = new URL(trimmed);
+        if (!url.hostname) continue;
+        hostnames.add(normalizeHostname(url.hostname));
+      } catch {
+        // Ignore malformed lines
+      }
+    }
+
+    const uniqueHosts = Array.from(hostnames);
+    const hashes: string[] = [];
+    const chunkSize = 500;
+    for (let i = 0; i < uniqueHosts.length; i += chunkSize) {
+      const chunk = uniqueHosts.slice(i, i + chunkSize);
+      const chunkHashes = await Promise.all(chunk.map((h) => sha256Hex(h)));
+      hashes.push(...chunkHashes);
+    }
+
+    await api.storage.local.set({
+      [PHISHING_HASHES_KEY]: Array.from(new Set(hashes)),
+      [PHISHING_LAST_UPDATE_KEY]: Date.now(),
+    });
+  } catch (error) {
+    console.debug('[PG] Failed to update phishing lists:', error);
+  }
+}
 
 // Хелпър за съхранение
 async function getStorageValue<T>(key: string, fallback: T): Promise<T> {
@@ -22,6 +81,23 @@ api.tabs.onUpdated.addListener((tabId: number, changeInfo: any, tab: any) => {
     injectProxy(tabId);
   }
 });
+
+// Keep phishing lists fresh (local cache, updated ~once per day)
+try {
+  api.runtime.onInstalled?.addListener(() => {
+    updatePhishingListsIfNeeded(true);
+    api.alarms?.create?.(PHISHING_UPDATE_ALARM, { periodInMinutes: 24 * 60 });
+  });
+  api.runtime.onStartup?.addListener(() => {
+    updatePhishingListsIfNeeded(false);
+    api.alarms?.create?.(PHISHING_UPDATE_ALARM, { periodInMinutes: 24 * 60 });
+  });
+  api.alarms?.onAlarm?.addListener((alarm: any) => {
+    if (alarm?.name === PHISHING_UPDATE_ALARM) updatePhishingListsIfNeeded(false);
+  });
+} catch {
+  // alarms/onStartup may not exist in some runtimes
+}
 
 // Handle extension icon click to toggle the UI panel in the active tab
 api.action.onClicked.addListener((tab: any) => {

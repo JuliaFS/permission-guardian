@@ -28,6 +28,39 @@ type ExtensionActivityItem = {
   detail: string;
 };
 
+const TRUSTED_EXTENSION_ID_ALLOWLIST = new Set<string>([
+  // React Developer Tools (Chrome Web Store)
+  'fmkadmapgofadopljbjfkapdkoienihi',
+  // Angular DevTools (Chrome Web Store)
+  'ienfalfjdbdpebioblfackkekamfmbnh',
+  // uBlock Origin
+  'cjpalhdlnbpafiamejdnhcphjbkeiagm',
+  // AdBlock
+  'gighmmpiobklfepjocnamgkkbiglidom',
+  // LastPass
+  'hdokiejnpimakedhajhdlcegeplioahd',
+]);
+
+const TRUSTED_EXTENSION_NAME_KEYWORDS = [
+  'react developer tools',
+  'angular devtools',
+  'ublock',
+  'adblock',
+  'lastpass',
+];
+
+function isSensitiveHostname(hostname: string) {
+  const h = hostname.toLowerCase();
+  return (
+    h.includes('bank') ||
+    h.includes('paypal') ||
+    h.includes('login') ||
+    h.includes('account') ||
+    h.endsWith('.gov') ||
+    h.endsWith('.mil')
+  );
+}
+
 type Education = {
   title: string;
   why: string[];
@@ -356,6 +389,135 @@ function getRiskCategory(score: number) {
   return { label: 'High Risk', color: '#dc2626' };
 }
 
+function formatActivity(
+  type: ExtensionActivityItem['type'],
+  detail: string,
+  options?: { resolveExtensionName?: (extensionId: string) => string | undefined },
+): {
+  key: string;
+  label: string;
+  message: string;
+  details?: string;
+  detailsButton?: { closed: string; open: string };
+  tone?: 'safe' | 'info' | 'warning';
+} {
+  const fallback = {
+    key: `${type}:${detail}`,
+    label:
+      type === 'extension_injection'
+        ? '💉 Script Injected'
+        : type === 'network_request'
+          ? '🌐 Network Request'
+          : '🍪 Site Data Access',
+    message: detail,
+  };
+
+  let url: URL | null = null;
+  try {
+    url = new URL(detail);
+  } catch {
+    return fallback;
+  }
+
+  const host = url.hostname;
+  const path = url.pathname || '/';
+  const isScript = path.endsWith('.js');
+  const isChromeExtension = url.protocol === 'chrome-extension:';
+  const isJobsBgStats = host === 'stats2.jobs.bg' && path.startsWith('/add/');
+  const pageHost = (() => {
+    try {
+      return globalThis.location?.hostname ? globalThis.location.hostname.toLowerCase() : '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const isSameSite = (() => {
+    if (!pageHost) return false;
+    const a = host.toLowerCase();
+    const b = pageHost.toLowerCase();
+    return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+  })();
+
+  const lastPathSegment = (p: string) => {
+    const cleaned = p.split('?')[0];
+    const parts = cleaned.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : cleaned || '/';
+  };
+
+  if (type === 'extension_injection' || isChromeExtension) {
+    const extensionId = host;
+    const file = lastPathSegment(path);
+    const extensionName = options?.resolveExtensionName?.(extensionId);
+
+    const normalizedName = (extensionName || '').toLowerCase();
+    const isTrusted =
+      TRUSTED_EXTENSION_ID_ALLOWLIST.has(extensionId) ||
+      TRUSTED_EXTENSION_NAME_KEYWORDS.some((k) => normalizedName.includes(k));
+
+    const isSensitivePage = pageHost ? isSensitiveHostname(pageHost) : false;
+
+    return {
+      key: `extension_injection:${extensionId}:${file}`,
+      label: isTrusted
+        ? '✅ Trusted tool'
+        : isSensitivePage
+          ? '🚨 Unknown extension on a sensitive site'
+          : '🧩 Extension changed the page',
+      message: isTrusted
+        ? `The tool “${extensionName || extensionId}” is checking/enhancing this page. This is normal for that extension.`
+        : isSensitivePage
+          ? `An unknown extension is running on a sensitive page (banking/login). If you don’t recognize it, disable or remove it.`
+          : extensionName
+            ? `The extension “${extensionName}” added code to this page so its features can work.`
+            : `A browser extension added code to this page so its features can work.`,
+      details: extensionName
+        ? `Extension: ${extensionName} (ID: ${extensionId}), file: ${file}`
+        : `Extension ID: ${extensionId}, file: ${file}`,
+      detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
+      tone: isTrusted ? 'safe' : isSensitivePage ? 'warning' : 'info',
+    };
+  }
+
+  if (type === 'network_request' || type === 'data_access') {
+    if (isJobsBgStats) {
+      return {
+        key: `tracking:${host}${path}`,
+        label: type === 'network_request' ? '📊 Tracking request' : '📊 Tracking request',
+        message: `A tracking/analytics request was sent to ${host}.`,
+        details: `${host}${path}`,
+        detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
+        tone: 'info',
+      };
+    }
+
+    if (isScript) {
+      const file = lastPathSegment(path);
+      return {
+        key: `script_load:${host}${path}`,
+        label: isSameSite ? '✅ Normal page code' : '🧩 Third‑party code loaded',
+        message: isSameSite
+          ? `This website loaded its own script from ${host} (${file}). This is normal.`
+          : `This page loaded a script from another site: ${host} (${file}). If you don’t recognize it, it could be analytics/ads/tracking.`,
+        details: `${host}${path}`,
+        detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
+        tone: isSameSite ? 'safe' : 'info',
+      };
+    }
+
+    return {
+      key: `request:${host}${path}`,
+      label: type === 'network_request' ? '🌐 Website connection' : '🌐 Website connection',
+      message: `This page connected to ${host}.`,
+      details: `${host}${path}`,
+      detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
+      tone: isSameSite ? 'safe' : 'info',
+    };
+  }
+
+  return fallback;
+}
+
 export function WarningPanel({
   overall,
   page,
@@ -390,6 +552,7 @@ export function WarningPanel({
   const [quizIdx, setQuizIdx] = useState(0);
   const [quizFeedback, setQuizFeedback] = useState<string | null>(null);
   const [mode, setMode] = useState<'strict' | 'balanced' | 'silent'>('balanced');
+  const [activityDetailsOpen, setActivityDetailsOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const fetchData = async () => {
@@ -584,8 +747,8 @@ export function WarningPanel({
       </div>
 
       {/* Top summary: overall score and quick status */}
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
-        <div style={{ flex: 1, background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #eef2ff' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
+        <div style={{ width: '100%', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #eef2ff' }}>
           <div style={{ fontSize: '12px', color: '#6b7280' }}>Overall Security</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
             <div style={{ fontSize: '20px', fontWeight: '700', color: overallCat.color }}>
@@ -604,7 +767,7 @@ export function WarningPanel({
         {pageBanner && (
           <div
             style={{
-              minWidth: '220px',
+              width: '100%',
               background: pageBanner.tone === 'danger' ? '#fff7f7' : '#fffbeb',
               border: pageBanner.tone === 'danger' ? '1px solid #fee2e2' : '1px solid #fde68a',
               color: pageBanner.tone === 'danger' ? '#7f1d1d' : '#92400e',
@@ -803,17 +966,85 @@ export function WarningPanel({
         <div className="guardian-panel__activity">
           <h4>📡 Live Extension Activity</h4>
           <div className="guardian-panel__timeline">
-            {extensionActivity.slice(-5).reverse().map((act, i) => (
-              <div key={i} className="guardian-panel__activityItem">
-                <span className="guardian-panel__activityType">
-                  {act.type === 'extension_injection' ? '💉 Script Injected' : 
-                   act.type === 'network_request' ? '🌐 Network Call' : '🍪 Data Access'}
-                </span>
-                <div className="guardian-panel__subtle" style={{fontSize: '11px'}}>
-                  {act.detail}
+            {(() => {
+              const resolveExtensionName = (extensionId: string) => {
+                const ext = dashboardData?.extensionSummary?.find((e) => e.id === extensionId);
+                return ext?.name;
+              };
+
+              const formatted = extensionActivity
+                .slice(-10)
+                .reverse()
+                .map((act) =>
+                  formatActivity(act.type, act.detail, { resolveExtensionName }),
+                );
+
+              const grouped: Array<{ item: ReturnType<typeof formatActivity>; count: number }> = [];
+              for (const item of formatted) {
+                const existing = grouped.find((g) => g.item.key === item.key);
+                if (existing) existing.count += 1;
+                else grouped.push({ item, count: 1 });
+              }
+
+              return grouped.slice(0, 5).map(({ item, count }, i) => (
+                <div key={`${item.key}:${i}`} className="guardian-panel__activityItem">
+                  <span
+                    className="guardian-panel__activityType"
+                    style={{
+                      color:
+                        item.tone === 'warning'
+                          ? '#dc2626'
+                          : item.tone === 'safe'
+                            ? '#059669'
+                            : '#111827',
+                      fontWeight: item.tone === 'warning' ? 800 : undefined,
+                    }}
+                  >
+                    {item.label}
+                    {count > 1 ? ` (x${count})` : ''}
+                  </span>
+                  <div className="guardian-panel__subtle" style={{ fontSize: '11px' }}>
+                    {item.message}
+                  </div>
+                  {item.details ? (
+                    <div style={{ marginTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setActivityDetailsOpen((prev) => ({
+                            ...prev,
+                            [item.key]: !prev[item.key],
+                          }));
+                        }}
+                        style={{
+                          background: '#fff',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          color: '#111827',
+                        }}
+                      >
+                        {activityDetailsOpen[item.key]
+                          ? item.detailsButton?.open ?? 'Hide details'
+                          : item.detailsButton?.closed ?? 'Details'}
+                      </button>
+                      {activityDetailsOpen[item.key] ? (
+                        <div
+                          className="guardian-panel__subtle"
+                          style={{ fontSize: '11px', marginTop: '6px' }}
+                        >
+                          {item.details}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
-              </div>
-            ))}
+              ));
+            })()}
           </div>
         </div>
       )}

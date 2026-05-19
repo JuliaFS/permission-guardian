@@ -11,7 +11,11 @@ export async function injectPanel(
     extension: { score: number; level: string }
   },
   signals: { page: RiskSignal[]; extension: RiskSignal[] },
-  options?: { showCloseButton?: boolean; injectedSignals?: InjectedSignal[] },
+  options?: {
+    showCloseButton?: boolean
+    closeOnOutsideClick?: boolean
+    injectedSignals?: InjectedSignal[]
+  },
 ) {
   if (!extensionApi.isAvailable) return
 
@@ -66,8 +70,10 @@ export async function injectPanel(
       if (event.key === 'Escape') close()
     }
 
-    document.addEventListener('pointerdown', onDocumentPointerDown, true)
     document.addEventListener('keydown', onDocumentKeyDown, true)
+    if (options?.closeOnOutsideClick) {
+      document.addEventListener('pointerdown', onDocumentPointerDown, true)
+    }
 
     root.render(
       <WarningPanel

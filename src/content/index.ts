@@ -19,6 +19,42 @@ if (window.top !== window.self) {
 
   const runtime =
     (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime;
+  const api = (globalThis as any).chrome ?? (globalThis as any).browser;
+
+  const PHISHING_HASHES_KEY = "pg_phishing_hashes";
+  let phishingHashes: Set<string> | null = null;
+  let phishingHashesLoadedAt = 0;
+  const hostnameHashCache = new Map<string, string>();
+
+  function normalizeHostname(hostname: string) {
+    return hostname.toLowerCase().replace(/^www\./, "");
+  }
+
+  async function sha256Hex(value: string): Promise<string> {
+    const cached = hostnameHashCache.get(value);
+    if (cached) return cached;
+    const data = new TextEncoder().encode(value);
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    const hex = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    hostnameHashCache.set(value, hex);
+    return hex;
+  }
+
+  async function loadPhishingHashes(): Promise<Set<string>> {
+    // Reload at most once per minute to avoid hammering storage.
+    if (phishingHashes && Date.now() - phishingHashesLoadedAt < 60_000) return phishingHashes;
+
+    const result = await new Promise<any>((resolve) => {
+      api?.storage?.local?.get?.([PHISHING_HASHES_KEY], (data: any) => resolve(data || {}));
+    });
+
+    const list = Array.isArray(result?.[PHISHING_HASHES_KEY]) ? result[PHISHING_HASHES_KEY] : [];
+    phishingHashes = new Set<string>(list);
+    phishingHashesLoadedAt = Date.now();
+    return phishingHashes;
+  }
 
   // Inject the main-world script for Canvas/Clipboard/Sensor interception
   function injectMainWorldScript() {
@@ -52,10 +88,16 @@ if (window.top !== window.self) {
   if (!runtime?.id) {
     // Context invalidated, do nothing
   } else {
-    function compute() {
+    async function compute() {
       const url = window.location.href;
       const urlSignals = analyzeUrl(url);
-      const websiteSignals = analyzeWebsite(url);
+      const urlObj = new URL(url);
+      const hostname = normalizeHostname(urlObj.hostname);
+      const hashes = await loadPhishingHashes();
+      const hostnameHash = await sha256Hex(hostname);
+      const isKnownPhishing = hashes.has(hostnameHash);
+
+      const websiteSignals = analyzeWebsite(url, { knownPhishing: isKnownPhishing });
       const domSignals = analyzeDOM();
       const pageSignals = [...urlSignals, ...websiteSignals, ...domSignals];
 
@@ -88,9 +130,9 @@ if (window.top !== window.self) {
       };
     }
 
-    function reportBadgeRisk() {
+    async function reportBadgeRisk() {
       try {
-        const { overall } = compute();
+        const { overall } = await compute();
         runtime?.sendMessage?.({
           type: "PG_RISK_UPDATE",
           level: overall.level,
@@ -104,7 +146,7 @@ if (window.top !== window.self) {
       }
     }
 
-    function togglePanel() {
+    async function togglePanel() {
       const existing = document.getElementById("guardian-root");
       if (existing) {
         existing.remove();
@@ -112,7 +154,10 @@ if (window.top !== window.self) {
       }
 
       const showCloseButton =
-        globalThis.localStorage?.getItem("pg_show_close_button") === "1";
+        globalThis.localStorage?.getItem("pg_show_close_button") !== "0";
+
+      const closeOnOutsideClick =
+        globalThis.localStorage?.getItem("pg_close_on_outside_click") !== "0";
 
       const {
         overall,
@@ -121,7 +166,7 @@ if (window.top !== window.self) {
         pageSignals,
         extensionSignals,
         injectedSignals: currentSignals,
-      } = compute();
+      } = await compute();
 
       try {
         runtime?.sendMessage?.({
@@ -144,14 +189,14 @@ if (window.top !== window.self) {
           extension: extensionRisk,
         },
         { page: pageSignals, extension: extensionSignals },
-        { showCloseButton, injectedSignals: currentSignals },
+        { showCloseButton, closeOnOutsideClick, injectedSignals: currentSignals },
       );
     }
 
     runtime?.onMessage?.addListener((message: any) => {
       console.log("[PG] Message received in content script:", message.type);
       if (message?.type === "PG_TOGGLE_PANEL" && runtime?.id) {
-        togglePanel();
+        void togglePanel();
       }
     });
 
@@ -159,28 +204,28 @@ if (window.top !== window.self) {
     // (Keeps the icon informative even when the panel is closed.)
     if (document.readyState === "complete") {
       injectMainWorldScript();
-      reportBadgeRisk();
-      checkAutoShow();
+      void reportBadgeRisk();
+      void checkAutoShow();
     } else {
       window.addEventListener(
         "load",
         () => {
           injectMainWorldScript();
-          reportBadgeRisk();
-          checkAutoShow();
+          void reportBadgeRisk();
+          void checkAutoShow();
         },
         { once: true },
       );
     }
 
-    function checkAutoShow() {
+    async function checkAutoShow() {
       // If you want the modal to appear automatically like "it was" for high risk:
-      const { overall } = compute();
+      const { overall } = await compute();
       if (
         (overall.level as string) === "high" &&
         !document.getElementById("guardian-root")
       ) {
-        togglePanel();
+        void togglePanel();
       }
     }
   }
