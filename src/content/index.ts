@@ -218,8 +218,69 @@ if (window.top !== window.self) {
       );
     }
 
+    function isPotentialPaymentInput(element: EventTarget | null) {
+      if (!(element instanceof HTMLElement)) return false;
+      return element.matches(
+        "input[name*='card'], input[name*='cc'], input[name*='cvv'], input[name*='cvc'], input[autocomplete*='cc-'], input[placeholder*='card'], input[placeholder*='cvv'], input[placeholder*='cvc']",
+      );
+    }
+
+    function removeRiskInterceptor() {
+      const overlay = document.getElementById('guardian-warning-overlay');
+      if (overlay) overlay.remove();
+    }
+
+    function showRiskInterceptorBanner(score: number) {
+      if (document.getElementById('guardian-warning-overlay')) return;
+
+      const overlay = document.createElement('div');
+      overlay.id = 'guardian-warning-overlay';
+      Object.assign(overlay.style, {
+        position: 'fixed',
+        inset: '0',
+        background: 'rgba(0, 0, 0, 0.75)',
+        color: '#fff',
+        zIndex: '2147483647',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '24px',
+        boxSizing: 'border-box',
+      });
+
+      const messageBox = document.createElement('div');
+      Object.assign(messageBox.style, {
+        maxWidth: '640px',
+        width: '100%',
+        background: '#1f2937',
+        borderRadius: '16px',
+        padding: '24px',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.35)',
+        fontFamily: 'system-ui, sans-serif',
+      });
+
+      messageBox.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+          <div style="max-width:520px;">
+            <h2 style="margin:0 0 12px;color:#fee2e2;font-size:24px;line-height:1.2;">🛑 ВЪЗМОЖНА ИЗМАМА С КАРТА!</h2>
+            <p style="margin:0 0 16px;color:#f8fafc;font-size:16px;line-height:1.6;">
+              Разширението засече, че този сайт събира картови данни, но не използва официален защитен контейнер. Има огромен риск въведените данни да бъдат откраднати. Препоръчваме ви да прекратите плащането или да използвате еднократна виртуална карта!
+            </p>
+            <p style="margin:0;color:#f3f4f6;font-size:14px;opacity:0.9;">Risk score: ${score}</p>
+          </div>
+          <button id="guardian-warning-close" style="border:none;background:#f97316;color:#111827;padding:12px 18px;border-radius:999px;cursor:pointer;font-weight:700;">Затвори</button>
+        </div>
+      `;
+
+      messageBox.querySelector('#guardian-warning-close')?.addEventListener('click', () => {
+        removeRiskInterceptor();
+      });
+
+      overlay.appendChild(messageBox);
+      document.body.appendChild(overlay);
+    }
+
     async function checkAutoShow() {
-      // If you want the modal to appear automatically like "it was" for high risk:
       const { overall } = await compute();
       if (
         (overall.level as string) === "high" &&
@@ -227,6 +288,21 @@ if (window.top !== window.self) {
       ) {
         void togglePanel();
       }
+
+      document.addEventListener(
+        'focusin',
+        async (event) => {
+          if (!isPotentialPaymentInput(event.target)) return;
+
+          const { overall } = await compute();
+          if (overall.score >= 80) {
+            showRiskInterceptorBanner(overall.score);
+          }
+        },
+        true,
+      );
+
+      window.addEventListener('beforeunload', removeRiskInterceptor);
     }
   }
 }

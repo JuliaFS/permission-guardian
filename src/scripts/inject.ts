@@ -6,13 +6,49 @@
 
 (function () {
   // Helper function to dispatch events to Content Script
-  const dispatch = (signalId: string, action: string) => {
+  const dispatch = (signalId: string, action: string, detail?: Record<string, unknown>) => {
     window.dispatchEvent(
       new CustomEvent('PG_SIGNAL_EVENT', {
-        detail: { signalId, action, timestamp: Date.now(), origin: window.location?.origin ?? '' }
-      })
+        detail: {
+          signalId,
+          action,
+          timestamp: Date.now(),
+          origin: window.location?.origin ?? '',
+          ...detail,
+        },
+      }),
     );
   };
+
+  function detectCardDataInString(text: string): boolean {
+    const cardNumberRegex = /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b/;
+    const cvcRegex = /"cvc"\s*:\s*"\d{3}"|"cvv"\s*:\s*"\d{3}"|\bcvc=\d{3}\b|\bcvv=\d{3}\b/i;
+    return cardNumberRegex.test(text) || cvcRegex.test(text);
+  }
+
+  function extractBodyAsString(body: any): string | null {
+    if (typeof body === 'string') return body;
+    if (body instanceof URLSearchParams) return body.toString();
+    if (body instanceof FormData) {
+      const entries = Array.from(body.entries()).map(([key, value]) => `${key}=${value}`);
+      return entries.join('&');
+    }
+    if (body instanceof Blob) {
+      return null;
+    }
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      try {
+        return new TextDecoder().decode(body as ArrayBufferLike);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function triggerCardLeakAlert(url: string) {
+    dispatch('card_data_exfiltration', 'detected', { url });
+  }
 
   // === 1. Canvas Fingerprinting Interception ===
   const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
@@ -27,7 +63,43 @@
     return originalToBlob.call(this, callback, type, quality);
   };
 
-  // === 2. Clipboard Access Interception ===
+  // === 2. Network Exfiltration Interception ===
+  const originalFetch = window.fetch;
+  window.fetch = async function (input, init) {
+    const url = typeof input === 'string' ? input : (input as Request).url;
+    const body = init?.body ?? (typeof input !== 'string' && input instanceof Request ? input.body : null);
+    const bodyString = extractBodyAsString(body);
+
+    if (bodyString && detectCardDataInString(bodyString)) {
+      triggerCardLeakAlert(url);
+    }
+
+    return originalFetch.apply(this, arguments as any);
+  };
+
+  const originalXHROpen = XMLHttpRequest.prototype.open;
+  const originalXHRSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function () {
+    try {
+      const url = arguments[1];
+      (this as any)._pgRequestUrl = typeof url === 'string' ? url : url?.toString?.() ?? '';
+    } catch {
+      (this as any)._pgRequestUrl = '';
+    }
+    return originalXHROpen.apply(this, arguments as any);
+  };
+
+  XMLHttpRequest.prototype.send = function (body?: Document | BodyInit | null) {
+    const requestUrl = (this as any)._pgRequestUrl || window.location.href;
+    const bodyString = extractBodyAsString(body);
+    if (bodyString && detectCardDataInString(bodyString)) {
+      triggerCardLeakAlert(requestUrl);
+    }
+    return originalXHRSend.apply(this, arguments as any);
+  };
+
+  // === 3. Clipboard Access Interception ===
   if (navigator.clipboard) {
     const originalReadText = navigator.clipboard.readText;
     navigator.clipboard.readText = async function() {
