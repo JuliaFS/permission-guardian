@@ -56,10 +56,11 @@ export function analyzeDOM(): RiskSignal[] {
   }
 
   // Third-party scripts (rough tracker/ads indicator)
+  let pageScripts: HTMLScriptElement[] = [];
   try {
     const currentHost = window.location.hostname;
-    const scripts = Array.from(document.scripts);
-    const thirdParty = scripts.filter((s) => {
+    pageScripts = Array.from(document.scripts);
+    const thirdParty = pageScripts.filter((s) => {
       if (!s.src) return false;
       try {
         const u = new URL(s.src, window.location.href);
@@ -75,6 +76,127 @@ export function analyzeDOM(): RiskSignal[] {
         message: `Loads many third-party scripts (${thirdParty.length}) which can increase tracking`,
         weight: thirdParty.length >= 25 ? 25 : 12,
         category: "Tracking & Storage",
+      });
+    }
+  } catch {
+    // ignore
+  }
+
+  // Detect payment-related forms and fields
+  try {
+    const candidateInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input"));
+    const paymentTerms = [
+      "card",
+      "credit",
+      "cc-number",
+      "cc-csc",
+      "cc-cvv",
+      "security code",
+      "cvc",
+      "cvv",
+      "expiry",
+      "expiration",
+      "payment",
+      "billing",
+      "stripe",
+      "paypal",
+      "checkout",
+      "bank",
+    ];
+
+    function getInputContext(input: HTMLInputElement) {
+      const labels: string[] = [];
+      if (input.id) {
+        const label = document.querySelector(`label[for="${input.id}"]`);
+        if (label?.textContent) labels.push(label.textContent);
+      }
+      return [
+        input.name,
+        input.id,
+        input.placeholder,
+        input.getAttribute("aria-label"),
+        input.getAttribute("title"),
+        ...labels,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+    }
+
+    const paymentInputs = candidateInputs.filter((input) => {
+      const context = getInputContext(input);
+      const autocomplete = (input.autocomplete || "").toLowerCase();
+      if (autocomplete.startsWith("cc-") || /cc-(name|number|exp|csc|cvv)/.test(autocomplete)) {
+        return true;
+      }
+      return paymentTerms.some((term) => context.includes(term));
+    });
+
+    if (paymentInputs.length > 0) {
+      signals.push({
+        id: "payment_data_entry",
+        message: `This page contains ${paymentInputs.length} field(s) that may collect credit card or payment data.`,
+        weight: 55,
+        category: "Sensitive Data",
+      });
+
+      const paymentForms = Array.from(
+        new Set(
+          paymentInputs
+            .map((input) => input.closest("form"))
+            .filter((form): form is HTMLFormElement => !!form),
+        ),
+      );
+
+      paymentForms.forEach((form) => {
+        const action = form.action || window.location.href;
+        try {
+          const actionUrl = new URL(action, window.location.href);
+          if (actionUrl.origin !== window.location.origin) {
+            signals.push({
+              id: "payment_form_external_submit",
+              message: "A payment form on this page submits to a different site, which can increase the risk of data misuse.",
+              weight: 65,
+              category: "Website Security",
+            });
+          }
+        } catch {
+          // ignore malformed form action
+        }
+      });
+    }
+  } catch {
+    // ignore
+  }
+
+  // Detect suspicious payment-related scripts loaded by the page
+  try {
+    const suspiciousScriptKeywords = [
+      "crypto-js",
+      "stripe",
+      "payment",
+      "checkout",
+      "card-number",
+      "jquery.payment",
+      "securepay",
+      "paypal",
+      "woocommerce",
+      "payment-form",
+      "stripe-gateway",
+    ];
+    const currentHost = window.location.hostname;
+    const suspiciousScripts = pageScripts.filter((script) => {
+      if (!script.src) return false;
+      const normalized = script.src.toLowerCase();
+      return suspiciousScriptKeywords.some((keyword) => normalized.includes(keyword));
+    });
+
+    if (suspiciousScripts.length > 0) {
+      signals.push({
+        id: "suspicious_payment_script",
+        message: `Loaded ${suspiciousScripts.length} suspicious payment-related script(s) on the page.`,
+        weight: 45,
+        category: "Website Reputation",
       });
     }
   } catch {

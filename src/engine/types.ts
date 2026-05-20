@@ -12,4 +12,5 @@ export interface InjectedSignal {
   signalId: string;
   action: string;
   timestamp: number;
+  origin?: string;
 }

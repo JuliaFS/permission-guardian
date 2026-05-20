@@ -80,7 +80,7 @@ export function analyzeWebsite(url: string, options?: { knownPhishing?: boolean 
       if (distance > 0 && distance <= 2) {
         signals.push({
           id: "website_typosquatting",
-          message: `Внимание! Този сайт имитира известната марка "${brand}" (Засечена е визуална прилика).`,
+          message: `Warning: this site looks like it is impersonating the brand "${brand}".`,
           weight: 85,
           category: "Website Impersonation",
         });
@@ -91,7 +91,7 @@ export function analyzeWebsite(url: string, options?: { knownPhishing?: boolean 
       if (hostname.includes(brand) && !hostname.endsWith("." + brand)) {
         signals.push({
           id: "website_brand_spoofing",
-          message: `Името на легитимна компания (${brand}) е скрито вътре в адреса. Почти сигурен фишинг.`,
+          message: `A legitimate brand name (${brand}) is embedded in the URL, which is a common phishing trick.`,
           weight: 95,
           category: "Website Impersonation",
         });
@@ -99,11 +99,43 @@ export function analyzeWebsite(url: string, options?: { knownPhishing?: boolean 
       }
     }
 
+    const suspiciousPaymentPaths = [
+      "/wp-content/plugins/angler-stripe-gateway",
+      "/wp-content/plugins/stripe",
+      "/wp-content/plugins/woocommerce",
+      "/wp-content/plugins/paypal",
+      "/wp-content/plugins/payment",
+      "/wp-content/plugins/stripe-gateway",
+      "/checkout",
+      "/payment",
+      "/billing",
+      "/order",
+      "crypto-js.min.js",
+      "jquery.payment",
+      "payment-form",
+      "securepay",
+    ];
+
+    const lowerPath = urlObj.pathname.toLowerCase();
+    const lowerUrl = url.toLowerCase();
+    const isSuspiciousPaymentPath = suspiciousPaymentPaths.some((pattern) =>
+      lowerPath.includes(pattern) || lowerUrl.includes(pattern),
+    );
+
+    if (isSuspiciousPaymentPath) {
+      signals.push({
+        id: "website_suspicious_payment_infrastructure",
+        message: "This URL contains payment-related or plugin paths that are often used by fake checkout or card-stealing pages.",
+        weight: 60,
+        category: "Website Reputation",
+      });
+    }
+
     // 4. Known phishing lists (offline check; list is cached by background)
     if (options?.knownPhishing) {
       signals.push({
         id: "website_phishing_list",
-        message: "Сайтът е докладван и присъства в световните черни списъци за фишинг.",
+        message: "The site is reported in phishing blocklists.",
         weight: 100,
         category: "Website Security",
       });

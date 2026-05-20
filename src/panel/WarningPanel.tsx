@@ -401,6 +401,47 @@ function formatActivity(
   detailsButton?: { closed: string; open: string };
   tone?: 'safe' | 'info' | 'warning';
 } {
+  const describeKnownUrl = (url: URL): { label?: string; message?: string; details?: string; tone?: 'safe' | 'info' | 'warning' } | null => {
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname || '/';
+
+    // Vercel Web Analytics / Insights
+    if (path.startsWith('/_vercel/insights/') || host.includes('vercel-insights')) {
+      return {
+        label: '📊 Analytics script (Vercel)',
+        message:
+          'This is Vercel Web Analytics (Insights). Many sites include it to measure performance and usage. It is usually normal, but it can look suspicious if you weren’t expecting analytics.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    // Google CDN / app resources
+    if (host.endsWith('gstatic.com')) {
+      if (path.includes('/external_hosted/highlights/') || path.endsWith('highlight.pack.js')) {
+        return {
+          label: '💡 Syntax highlighter',
+          message:
+            'This is a code syntax-highlighting library loaded from Google’s CDN (gstatic). It’s commonly used on pages that display code.',
+          details: `${host}${path}`,
+          tone: 'safe',
+        };
+      }
+
+      if (host === 'gemini.gstatic.com' || path.startsWith('/_/js/')) {
+        return {
+          label: '✅ App resources (Google)',
+          message:
+            'These are Google app resources (scripts/assets) loaded for the page to work. This is normal on Google-owned sites.',
+          details: `${host}${path}`,
+          tone: 'safe',
+        };
+      }
+    }
+
+    return null;
+  };
+
   const fallback = {
     key: `${type}:${detail}`,
     label:
@@ -408,7 +449,9 @@ function formatActivity(
         ? '💉 Script Injected'
         : type === 'network_request'
           ? '🌐 Network Request'
-          : '🍪 Site Data Access',
+          : type === 'dynamic_injection'
+            ? '🧩 Page changed'
+            : '🍪 Site Data Access',
     message: detail,
   };
 
@@ -417,6 +460,18 @@ function formatActivity(
     url = new URL(detail);
   } catch {
     return fallback;
+  }
+
+  const known = describeKnownUrl(url);
+  if (known) {
+    return {
+      key: `${type}:${url.hostname}${url.pathname}`,
+      label: known.label ?? fallback.label,
+      message: known.message ?? fallback.message,
+      details: known.details,
+      detailsButton: known.details ? { closed: '💡 Learn more', open: 'Hide details' } : undefined,
+      tone: known.tone ?? 'info',
+    };
   }
 
   const host = url.hostname;
@@ -476,6 +531,20 @@ function formatActivity(
         : `Extension ID: ${extensionId}, file: ${file}`,
       detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
       tone: isTrusted ? 'safe' : isSensitivePage ? 'warning' : 'info',
+    };
+  }
+
+  if (type === 'dynamic_injection') {
+    const isIframe = detail.includes('.html') || detail.includes('/embed') || detail.includes('iframe');
+    return {
+      key: `dynamic_injection:${host}${path}`,
+      label: isScript ? '🧩 Script added to page' : isIframe ? '🧩 Embedded content added' : '🧩 Page added a resource',
+      message: isScript
+        ? `This page dynamically added a script from ${host}. This is often normal (analytics/widgets), but unexpected third‑party scripts can increase tracking risk.`
+        : `This page dynamically added a resource from ${host}. This is often normal, but it can be used for tracking.`,
+      details: `${host}${path}`,
+      detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
+      tone: isSameSite ? 'safe' : 'info',
     };
   }
 
@@ -986,8 +1055,17 @@ export function WarningPanel({
                 else grouped.push({ item, count: 1 });
               }
 
-              return grouped.slice(0, 5).map(({ item, count }, i) => (
-                <div key={`${item.key}:${i}`} className="guardian-panel__activityItem">
+              const topItems = grouped.slice(0, 5);
+              return topItems.map(({ item, count }, i) => (
+                <div
+                  key={`${item.key}:${i}`}
+                  className="guardian-panel__activityItem"
+                  style={{
+                    paddingBottom: '10px',
+                    marginBottom: i === topItems.length - 1 ? 0 : '10px',
+                    borderBottom: i === topItems.length - 1 ? 'none' : '1px solid #f3f4f6',
+                  }}
+                >
                   <span
                     className="guardian-panel__activityType"
                     style={{
@@ -1192,6 +1270,12 @@ export function WarningPanel({
                       <span style={{ fontSize: '10px', marginLeft: 'auto', color: '#6b7280' }}>
                         {educationalContent.severity.toUpperCase()}
                       </span>
+                    </div>
+
+                    {/* Show the page origin and a human-friendly timestamp for each injected signal */}
+                    <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '6px' }}>
+                      {signal.origin ? <span>{signal.origin}</span> : null}
+                      <span style={{ marginLeft: signal.origin ? 8 : 0 }}>{new Date(signal.timestamp).toLocaleString()}</span>
                     </div>
 
                     <details style={{ marginTop: '8px' }}>

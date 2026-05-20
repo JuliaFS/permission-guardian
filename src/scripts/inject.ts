@@ -9,7 +9,7 @@
   const dispatch = (signalId: string, action: string) => {
     window.dispatchEvent(
       new CustomEvent('PG_SIGNAL_EVENT', {
-        detail: { signalId, action, timestamp: Date.now() }
+        detail: { signalId, action, timestamp: Date.now(), origin: window.location?.origin ?? '' }
       })
     );
   };

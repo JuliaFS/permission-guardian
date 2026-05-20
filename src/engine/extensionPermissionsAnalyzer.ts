@@ -1,179 +1,198 @@
 import type { RiskSignal } from "./types";
 
-type ManifestLike = {
-  name?: string;
-  description?: string;
-  permissions?: string[];
-  optional_permissions?: string[];
-  host_permissions?: string[];
-  optional_host_permissions?: string[];
-  background?: {
-    service_worker?: string;
-    persistent?: boolean;
-  };
-  content_scripts?: Array<{
-    matches?: string[];
-  }>;
-};
-
 const DANGEROUS_PERMISSIONS: Array<{
   id: string;
   permission: string;
   weight: number;
   message: string;
 }> = [
+  // Add modern Chrome MV3 critical permissions and localized detection for Bulgarian descriptions
   {
-    id: "ext_perm_tabs",
-    permission: "tabs",
-    weight: 35,
-    message: "Has access to your open tabs (titles/URLs), which can reveal sensitive browsing activity",
+    id: "ext_perm_proxy",
+    permission: "proxy",
+    weight: 90, // Very high risk
+    message: "Can redirect your entire internet traffic through an external server. Risk of data theft.",
   },
   {
-    id: "ext_perm_cookies",
-    permission: "cookies",
-    weight: 45,
-    message: "Can read/modify cookies, which can expose logins and tracking identifiers",
+    id: "ext_perm_declarativeNetRequest",
+    permission: "declarativeNetRequest",
+    weight: 60,
+    message: "Can observe, block, or modify network requests made by websites.",
   },
   {
-    id: "ext_perm_webRequest",
-    permission: "webRequest",
-    weight: 50,
-    message: "Can observe/modify network requests, which can be used for tracking, injection, or data interception",
+    id: "ext_perm_declarativeNetRequestFeedback",
+    permission: "declarativeNetRequestFeedback",
+    weight: 60,
+    message: "Can see and report which web requests you block or redirect.",
   },
   {
-    id: "ext_perm_history",
-    permission: "history",
-    weight: 45,
-    message: "Can read your browsing history, which may reveal private interests and behavior",
-  },
-  {
-    id: "ext_perm_activeTab",
-    permission: "activeTab",
-    weight: 15,
-    message: "Can access the currently active tab after you click the extension (still powerful on sensitive pages)",
-  },
-  {
-    id: "ext_perm_clipboardRead",
-    permission: "clipboardRead",
-    weight: 50,
-    message: "Can read your clipboard, which may include passwords, 2FA codes, and private messages",
-  },
-  {
-    id: "ext_perm_clipboardWrite",
-    permission: "clipboardWrite",
-    weight: 25,
-    message: "Can write to your clipboard, which can be abused to swap payment addresses or links",
-  },
-  {
-    id: "ext_perm_scripting",
-    permission: "scripting",
-    weight: 35,
-    message: "Can inject scripts into pages, which can read page content and interact with forms",
-  },
+    id: "ext_perm_storage",
+    permission: "storage",
+    weight: 20,
+    message: "Can store unlimited local data on your device.",
+  }
 ];
 
-function normalizeText(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.toLowerCase();
-}
+// Extend the keyword dictionary with Bulgarian terms so description-based matching works for localized extensions
+const keywordsByPermission: Record<string, string[]> = {
+  tabs: ["tab", "tabs", "productivity", "session", "organize", "workspace", "таб", "табове", "раздел"],
+  cookies: ["cookie", "login", "auth", "session", "privacy", "tracking", "бисквитки", "вход"],
+  webRequest: ["request", "network", "proxy", "adblock", "block", "security", "мрежа", "заявка"],
+  history: ["history", "visited", "bookmark", "search", "recommend", "история", "отваряни"],
+  activeTab: ["tab", "page", "site", "current", "analyze", "scan", "текущ", "страница"],
+  clipboardRead: ["clipboard", "paste", "copy", "password", "security", "клипборд", "копиране", "парола"],
+  clipboardWrite: ["clipboard", "copy", "paste", "format", "клипборд", "запис"],
+  scripting: ["inject", "script", "content", "page", "analyze", "scan", "скрипт", "код"],
+  proxy: ["proxy", "vpn", "network", "traffic", "прокси", "трафик"],
+  storage: ["storage", "local storage", "data", "cache", "save", "sync", "съхранение", "локално", "данни", "кеш", "синхронизиране"],
+  declarativeNetRequest: ["block", "adblock", "request", "filter", "блокер", "филтър"],
+  declarativeNetRequestFeedback: ["block", "adblock", "request", "filter", "feedback", "report", "блокер", "филтър", "доклад", "обратно"]
+};
 
-function purposeText(manifest: ManifestLike): string {
-  return `${manifest.name ?? ""} ${manifest.description ?? ""}`.trim();
-}
+type ManifestLike = {
+  name?: string;
+  description?: string;
+  permissions?: string[];
+  optional_permissions?: string[];
+  host_permissions?: string[];
+  background?: {
+    service_worker?: string;
+    persistent?: boolean;
+  };
+};
 
 function allPermissionStrings(manifest: ManifestLike): string[] {
-  const perms = [
-    ...(manifest.permissions ?? []),
-    ...(manifest.optional_permissions ?? []),
-  ];
-  return perms.filter((p) => typeof p === "string");
+  const permissions = new Set<string>();
+  const add = (items: unknown) => {
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      if (typeof item === "string") {
+        permissions.add(item);
+      }
+    }
+  };
+  add(manifest.permissions);
+  add(manifest.optional_permissions);
+  return [...permissions];
 }
 
 function allHostPatterns(manifest: ManifestLike): string[] {
-  const fromHosts = [
-    ...(manifest.host_permissions ?? []),
-    ...(manifest.optional_host_permissions ?? []),
-  ];
-  const fromContentScripts =
-    manifest.content_scripts?.flatMap((cs) => cs.matches ?? []) ?? [];
+  const hosts = new Set<string>();
+  const add = (items: unknown) => {
+    if (!Array.isArray(items)) return;
+    for (const item of items) {
+      if (typeof item !== "string") continue;
+      if (item === "<all_urls>" || item.includes("://") || item.includes("*") || item.startsWith("<")) {
+        hosts.add(item);
+      }
+    }
+  };
+  add(manifest.host_permissions);
+  add(manifest.permissions);
+  add(manifest.optional_permissions);
+  return [...hosts];
+}
 
-  return [...fromHosts, ...fromContentScripts].filter(
-    (p) => typeof p === "string",
-  );
+function purposeText(manifest: ManifestLike): string {
+  return [manifest.name, manifest.description]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function isSelfManifest(manifest: ManifestLike): boolean {
+  const text = purposeText(manifest);
+  return text.includes("permission guardian") || text.includes("permissionguardian");
 }
 
 function seemsToNeedPermission(purpose: string, permission: string): boolean {
-  const text = normalizeText(purpose);
-  if (!text) return true; // if no description, don't claim mismatch
-
-  const keywordsByPermission: Record<string, string[]> = {
-    tabs: ["tab", "tabs", "productivity", "session", "organize", "workspace"],
-    cookies: ["cookie", "login", "auth", "session", "privacy", "tracking"],
-    webRequest: ["request", "network", "proxy", "adblock", "block", "security"],
-    history: ["history", "visited", "bookmark", "search", "recommend"],
-    activeTab: ["tab", "page", "site", "current", "analyze", "scan"],
-    clipboardRead: ["clipboard", "paste", "copy", "password", "security"],
-    clipboardWrite: ["clipboard", "copy", "paste", "format"],
-    scripting: ["inject", "script", "content", "page", "analyze", "scan"],
-  };
-
-  const keywords = keywordsByPermission[permission];
-  if (!keywords) return true;
-  return keywords.some((k) => text.includes(k));
+  const keywords = keywordsByPermission[permission] ?? [];
+  const normalizedPurpose = purpose.toLowerCase();
+  return keywords.some((keyword) => normalizedPurpose.includes(keyword));
 }
 
 export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
+  if (isSelfManifest(manifest)) {
+    return [
+      {
+        id: "ext_self_exclusion",
+        message: "You are protected! These are Permission Guardian's permissions, required to keep you safe in real time.",
+        weight: 0,
+        category: "Extension Permission",
+        severity: "low",
+      },
+    ];
+  }
+
   const signals: RiskSignal[] = [];
   const permissions = allPermissionStrings(manifest);
   const hostPatterns = allHostPatterns(manifest);
   const purpose = purposeText(manifest);
 
-  // Host permissions red flags
-  const hasAllUrls =
-    hostPatterns.includes("<all_urls>") || hostPatterns.includes("*://*/*");
+  const hasAllUrls = hostPatterns.includes("<all_urls>") || hostPatterns.includes("*://*/*");
+  const hasActiveTab = permissions.includes("activeTab");
+
+  // УМНА КОРЕКЦИЯ: Ако разширението иска достъп до ВСИЧКИ сайтове
   if (hasAllUrls) {
     signals.push({
       id: "ext_host_all_urls",
-      message: "This extension can run on ALL websites (<all_urls>)",
-      weight: 70,
+      message: "This extension has access to every website you visit.",
+      weight: 75,
+      category: "Extension Host Access",
+    });
+  } else if (hasActiveTab) {
+    // Обучителен елемент: Обясняваме, че това е добра и сигурна практика
+    signals.push({
+      id: "ext_host_secure_activetab",
+      message: "The extension only accesses sites after you explicitly click its icon. (Good security practice)",
+      weight: 5, // Много нисък риск
       category: "Extension Host Access",
     });
   }
 
-  // Background scripts / service worker
+  // Background scripts / service worker (Специфика за MV2 срещу MV3)
   if (manifest.background?.service_worker) {
     signals.push({
       id: "ext_background_service_worker",
-      message: "Runs background code (service worker), which can perform work in the background",
+      message: "Runs background code (Service Worker). It can perform tasks even when the panel is closed.",
       weight: 10,
       category: "Extension Background",
     });
   }
+  
+  // Постоянен фон (MV2 остатък, много опасен за проследяване)
   if (manifest.background?.persistent === true) {
     signals.push({
       id: "ext_background_persistent",
-      message: "Uses a persistent background page (higher tracking / always-on risk)",
-      weight: 35,
+      message: "Uses a persistent background page. Higher risk of real-time tracking.",
+      weight: 40,
       category: "Extension Background",
     });
   }
 
-  // Permissions
+  // Проверка на опасните пермишъни
   for (const def of DANGEROUS_PERMISSIONS) {
     if (!permissions.includes(def.permission)) continue;
+
+    // Специфична проверка: Ако имаме <all_urls>, някои права стават двойно по-опасни!
+    let finalWeight = def.weight;
+    if (hasAllUrls && ["cookies", "scripting", "webRequest"].includes(def.permission)) {
+      finalWeight += 15; // Повишаваме риска, защото правото важи за ЦЕЛИЯ интернет
+    }
 
     signals.push({
       id: def.id,
       message: def.message,
-      weight: def.weight,
+      weight: Math.min(100, finalWeight),
       category: "Extension Permission",
     });
 
+    // Проверка за съответствие с целта
     if (!seemsToNeedPermission(purpose, def.permission)) {
       signals.push({
         id: `${def.id}_mismatch`,
-        message: `Permission “${def.permission}” may not match the extension’s stated purpose`,
-        weight: 15,
+        message: `Warning: The permission "${def.permission}" does not match the stated purpose or extension name.`,
+        weight: 25,
         category: "Purpose Match",
       });
     }
