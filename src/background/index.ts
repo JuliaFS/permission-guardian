@@ -209,6 +209,12 @@ async function handleActivityLog(activity: any) {
   ]);
 }
 
+function isChromeWebStoreExtension(ext: any): boolean {
+  // Chrome Web Store extensions have updateUrl pointing to Google's update server
+  const updateUrl = ext?.updateUrl || '';
+  return updateUrl.includes('clients2.google.com/service/update2/crx');
+}
+
 async function handleGetDashboardData() {
   const [history, activity, lastUsed, extensions] = await Promise.all([
     getStorageValue(LOG_STORAGE_KEY, []),
@@ -216,5 +222,12 @@ async function handleGetDashboardData() {
     getStorageValue(LAST_USED_KEY, null),
     api.management.getAll()
   ]);
-  return { history, activity, lastUsed, extensions };
+  
+  // Enhance extensions with Chrome Web Store verification
+  const enhancedExtensions = extensions.map((ext: any) => ({
+    ...ext,
+    isFromWebStore: isChromeWebStoreExtension(ext)
+  }));
+  
+  return { history, activity, lastUsed, extensions: enhancedExtensions };
 }

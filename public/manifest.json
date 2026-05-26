@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Permission Guardian",
   "version": "1.0.0",
-  "description": "Monitors and logs browser permissions requests.",
+  "description": "Monitors and logs browser permissions requests. Permission Guardian does NOT collect, store, or send any user data. All analysis is performed locally in the browser.",
   "permissions": [
     "activeTab", 
     "scripting", 

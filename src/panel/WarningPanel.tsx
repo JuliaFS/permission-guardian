@@ -11,6 +11,7 @@ type ExtensionSummaryItem = {
   hasActivity: boolean;
   riskScore: number;
   lastUsed?: number;
+  isFromWebStore?: boolean;
 };
 
 type SitePermissionItem = {
@@ -40,6 +41,9 @@ const TRUSTED_EXTENSION_ID_ALLOWLIST = new Set<string>([
   // LastPass
   'hdokiejnpimakedhajhdlcegeplioahd',
 ]);
+
+const GITHUB_REPO_URL = 'https://github.com/JuliaFS/permission-guardian'; //TO DO change privacy
+const SUPPORT_DEVELOPMENT_URL = 'https://github.com/sponsors/JuliaFS'; //TO DO add later
 
 const TRUSTED_EXTENSION_NAME_KEYWORDS = [
   'react developer tools',
@@ -293,38 +297,39 @@ const EDUCATION_BY_SIGNAL_ID: Record<string, Education> = {
     safer: ["Deny unless you explicitly want updates from a trusted news or messaging site."],
   },
   site_cookies_present: {
-    title: "Cookies detected on this site",
+    title: "This site stores browser cookies",
     why: [
-      "Cookies can store identifiers used for login sessions and tracking.",
-      "More cookies can mean more trackers and more data shared across visits.",
+      "Cookies are common for login, preferences, and session handling.",
+      "More cookies also mean more identifiers that can be used for tracking or profiling.",
     ],
     safer: [
-      "Avoid logging in unless you trust the domain.",
-      "Clear site data if you don’t need to stay signed in.",
+      "If you don’t fully trust the site, clear its cookies after you finish.",
+      "Use privacy settings or tracker controls for sites you visit frequently.",
     ],
   },
   site_localstorage_present: {
-    title: "LocalStorage data detected",
+    title: "This site stores localStorage data",
     why: [
-      "LocalStorage persists data on your device and is often used for tracking and profiling.",
-      "It can store identifiers that survive browser restarts.",
+      "LocalStorage is used to keep settings and site state across visits.",
+      "It is also a persistent storage channel that can carry tracking data if abused.",
     ],
-    safer: ["Clear site storage if you don’t trust the site.", "Use privacy settings or blockers to reduce tracking."],
+    safer: ["Clear site storage if you don’t trust the site.", "Use privacy or anti-tracking extensions when needed."],
   },
   site_sessionstorage_present: {
-    title: "SessionStorage data detected",
+    title: "This site stores sessionStorage data",
     why: [
-      "SessionStorage stores data for the current tab session and can still be used to track activity.",
+      "SessionStorage keeps state for the current tab without persisting after close.",
+      "That still expands the browser-side surface area for activity tracking.",
     ],
-    safer: ["Close the tab to clear session storage.", "Avoid entering sensitive data on suspicious sites."],
+    safer: ["Close the tab to clear session storage.", "Avoid entering sensitive data on untrusted pages."],
   },
   third_party_scripts_high: {
-    title: "Many third-party scripts loaded",
+    title: "Many third-party scripts are loaded",
     why: [
-      "Third-party scripts are often used for ads, analytics, and tracking.",
-      "Each extra script increases the attack surface (supply-chain risk).",
+      "Rich sites often load external scripts for ads, analytics, and widgets.",
+      "Each external script adds tracking and supply-chain surface area.",
     ],
-    safer: ["Use a tracker blocker (e.g., uBlock Origin).", "Be cautious with logins and payments on heavily scripted pages."],
+    safer: ["Use a tracker blocker on unfamiliar pages.", "Be cautious with logins and payments when many external scripts are present."],
   },
   third_party_iframes: {
     title: "Third-party iframes embedded",
@@ -383,16 +388,15 @@ function getEducation(signal: RiskSignal): Education {
 }
 
 function getRiskCategory(score: number) {
-  // Align with RiskEngine: higher numeric score => lower risk
-  if (score >= 70) return { label: 'Low Risk', color: '#059669' };
-  if (score >= 30) return { label: 'Medium Risk', color: '#b45309' };
+  if (score <= 10) return { label: 'Low Risk', color: '#059669' };
+  if (score <= 40) return { label: 'Medium Risk', color: '#d86f1e' };
   return { label: 'High Risk', color: '#dc2626' };
 }
 
 function formatActivity(
   type: ExtensionActivityItem['type'],
   detail: string,
-  options?: { resolveExtensionName?: (extensionId: string) => string | undefined },
+  options?: { resolveExtensionName?: (extensionId: string) => string | undefined; isWebStoreExtension?: (extensionId: string) => boolean },
 ): {
   key: string;
   label: string;
@@ -404,6 +408,82 @@ function formatActivity(
   const describeKnownUrl = (url: URL): { label?: string; message?: string; details?: string; tone?: 'safe' | 'info' | 'warning' } | null => {
     const host = url.hostname.toLowerCase();
     const path = url.pathname || '/';
+
+    // Inline/other non-URL script descriptor should be handled separately.
+    if (url.protocol === 'data:') {
+      return {
+        label: '🎨 Data resource',
+        message: 'This is an inline or data URI resource loaded by the page. It is often used for images, fonts, or embedded widgets.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    // Google Analytics / Tag Manager
+    if (host.endsWith('googletagmanager.com') || path.includes('/gtm.js')) {
+      return {
+        label: '📊 Google Tag Manager',
+        message:
+          'This is Google Tag Manager or a related analytics loader. It is used to wire up analytics and marketing tags on the page.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    if (host.endsWith('google-analytics.com') || path.includes('/gtag/js') || path.includes('/analytics.js')) {
+      return {
+        label: '📊 Google Analytics',
+        message: 'This is Google Analytics. It is used to collect usage and visitor data for the site.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    if (host.endsWith('js.stripe.com') || host.includes('stripe.com')) {
+      return {
+        label: '💳 Stripe payment script',
+        message: 'This is a Stripe payment script. It is used to handle checkout and payment forms.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    if (host.includes('paypal.com') || host.includes('paypalobjects.com')) {
+      return {
+        label: '💳 PayPal payment script',
+        message: 'This is a PayPal payment script. It is used for PayPal checkout and payment branding.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    if (host.includes('facebook.net') || host.includes('facebook.com') || host.includes('connect.facebook.net')) {
+      return {
+        label: '📊 Facebook Pixel / SDK',
+        message:
+          'This is Facebook tracking or SDK code. It is often used for ads, analytics, and conversion tracking.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    if (host.includes('doubleclick.net') || host.includes('adsrvr.org') || host.includes('adservice.google.com')) {
+      return {
+        label: '📢 Ad/tracking script',
+        message: 'This is an advertising or tracking script. It is commonly used to measure and serve ads.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
+
+    if (host.includes('segment.com') || host.includes('amplitude.com') || host.includes('mixpanel.com')) {
+      return {
+        label: '📊 Analytics script',
+        message: 'This is a third-party analytics provider used to collect usage and behavior data.',
+        details: `${host}${path}`,
+        tone: 'info',
+      };
+    }
 
     // Vercel Web Analytics / Insights
     if (path.startsWith('/_vercel/insights/') || host.includes('vercel-insights')) {
@@ -441,6 +521,79 @@ function formatActivity(
 
     return null;
   };
+
+  const describeInlineScript = (detail: string): { label: string; message: string; tone: 'safe' | 'info' | 'warning' } | null => {
+    if (!detail.startsWith('Inline script')) return null;
+
+    const match = detail.match(/^Inline script(?: \((.+)\))?$/i);
+    const kind = match?.[1]?.toLowerCase() ?? '';
+
+    if (kind.includes('analytics')) {
+      return {
+        label: '📊 Inline analytics script',
+        message: 'This page injected an inline analytics script. This is often used to measure usage or conversions.',
+        tone: 'info',
+      };
+    }
+    if (kind.includes('tag manager')) {
+      return {
+        label: '📦 Inline tag manager script',
+        message: 'This is an inline tag manager script. It is used to wire up analytics and marketing tags.',
+        tone: 'info',
+      };
+    }
+    if (kind.includes('facebook pixel')) {
+      return {
+        label: '📊 Inline Facebook Pixel',
+        message: 'This is an inline Facebook Pixel script. It is used for ads and conversion tracking.',
+        tone: 'info',
+      };
+    }
+    if (kind.includes('payment')) {
+      return {
+        label: '💳 Inline payment script',
+        message: 'This is an inline payment-related script. It may be part of a checkout or payment form.',
+        tone: 'info',
+      };
+    }
+    if (kind.includes('tracking')) {
+      return {
+        label: '🔍 Inline tracking script',
+        message: 'This is an inline tracking script. It may collect analytics or fingerprinting data.',
+        tone: 'info',
+      };
+    }
+    if (kind.includes('captcha')) {
+      return {
+        label: '🧾 Inline CAPTCHA script',
+        message: 'This is an inline CAPTCHA script. It is usually used to verify human users.',
+        tone: 'info',
+      };
+    }
+    if (kind.includes('media embed')) {
+      return {
+        label: '🎬 Inline media/script embed',
+        message: 'This is an inline script related to embedded media or playback.',
+        tone: 'info',
+      };
+    }
+
+    return {
+      label: '🧩 Inline script',
+      message: 'This page injected an inline script. Inline scripts can be used for page behavior, analytics, or hidden tracking.',
+      tone: 'info',
+    };
+  };
+
+  const inlineScript = describeInlineScript(detail);
+  if (inlineScript) {
+    return {
+      key: `${type}:${detail}`,
+      label: inlineScript.label,
+      message: inlineScript.message,
+      tone: inlineScript.tone,
+    };
+  }
 
   const fallback = {
     key: `${type}:${detail}`,
@@ -504,10 +657,12 @@ function formatActivity(
     const extensionId = host;
     const file = lastPathSegment(path);
     const extensionName = options?.resolveExtensionName?.(extensionId);
+    const isWebStoreExtension = options?.isWebStoreExtension?.(extensionId) ?? false;
 
     const normalizedName = (extensionName || '').toLowerCase();
     const isTrusted =
       TRUSTED_EXTENSION_ID_ALLOWLIST.has(extensionId) ||
+      isWebStoreExtension ||
       TRUSTED_EXTENSION_NAME_KEYWORDS.some((k) => normalizedName.includes(k));
 
     const isSensitivePage = pageHost ? isSensitiveHostname(pageHost) : false;
@@ -536,12 +691,45 @@ function formatActivity(
 
   if (type === 'dynamic_injection') {
     const isIframe = detail.includes('.html') || detail.includes('/embed') || detail.includes('iframe');
+    const extension = path.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
+    const isStylesheet = extension === 'css';
+    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg'].includes(extension);
+    const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'avi'].includes(extension);
+    const isFont = ['woff', 'woff2', 'ttf', 'otf', 'eot'].includes(extension);
+    const isDataUri = detail.startsWith('data:');
+
+    const label = isScript
+      ? '🧩 Script added to page'
+      : isStylesheet
+        ? '🎨 Stylesheet added'
+        : isImage
+          ? '🖼️ Image added'
+          : isVideo
+            ? '🎬 Video added'
+            : isFont
+              ? '🔤 Font added'
+              : isIframe
+                ? '🧩 Embedded content added'
+                : '🧩 Page added a resource';
+
+    const message = isScript
+      ? `This page dynamically added a script from ${host}. This is often normal (analytics/widgets), but unexpected third-party scripts can increase tracking risk.`
+      : isStylesheet
+        ? `This page dynamically added a stylesheet from ${host}. This is often normal, but third-party styles can also be used for tracking or cosmetic manipulation.`
+        : isImage
+          ? `This page dynamically added an image from ${host}. This is usually normal, but third-party media can still affect privacy and page behavior.`
+          : isVideo
+            ? `This page dynamically added a video from ${host}. This is usually normal for media-rich sites, but external media can expose user behavior to third parties.`
+            : isFont
+              ? `This page dynamically added a font from ${host}. This is usually normal for custom typography, but it still fetches external resources.`
+              : isDataUri
+                ? `This page dynamically added an inline data resource. This is often normal, but it can include embedded tracking or fingerprinting content.`
+                : `This page dynamically added a resource from ${host}. This is often normal, but it can be used for tracking.`;
+
     return {
       key: `dynamic_injection:${host}${path}`,
-      label: isScript ? '🧩 Script added to page' : isIframe ? '🧩 Embedded content added' : '🧩 Page added a resource',
-      message: isScript
-        ? `This page dynamically added a script from ${host}. This is often normal (analytics/widgets), but unexpected third‑party scripts can increase tracking risk.`
-        : `This page dynamically added a resource from ${host}. This is often normal, but it can be used for tracking.`,
+      label,
+      message,
       details: `${host}${path}`,
       detailsButton: { closed: '💡 Learn more', open: 'Hide details' },
       tone: isSameSite ? 'safe' : 'info',
@@ -622,6 +810,35 @@ export function WarningPanel({
   const [quizFeedback, setQuizFeedback] = useState<string | null>(null);
   const [mode, setMode] = useState<'strict' | 'balanced' | 'silent'>('balanced');
   const [activityDetailsOpen, setActivityDetailsOpen] = useState<Record<string, boolean>>({});
+  const [activeInfoTopic, setActiveInfoTopic] = useState<string | null>(null);
+
+  const INFO_TOPICS: Record<string, { label: string; description: string }> = {
+    thirdPartyScripts: {
+      label: 'Third-party scripts',
+      description:
+        'Third-party scripts are loaded from domains other than the page you are visiting. Sites use them for ads, analytics, payment widgets, and social login. They can be useful, but untrusted third parties can also track you, inject extra code, or expose data if the site is compromised.',
+    },
+    cookies: {
+      label: 'Cookies',
+      description:
+        'Cookies store small pieces of data such as login state, shopping cart contents, and site preferences. They are needed for normal browsing, but if a cookie is stolen an attacker can impersonate your session on that site.',
+    },
+    localStorage: {
+      label: 'Local storage',
+      description:
+        'localStorage is browser storage that websites use to remember settings and cached data across visits. It is useful for faster page loading, but data stored here can become dangerous if a malicious script reads it without permission.',
+    },
+    sessionStorage: {
+      label: 'Session storage',
+      description:
+        'sessionStorage keeps temporary data while a browser tab is open. It helps pages preserve state during one visit. It is normally safe, but if stolen it can still reveal sensitive session data or login state.',
+    },
+    privacySurface: {
+      label: 'Privacy surface',
+      description:
+        'This page uses tracking/storage mechanisms like cookies, localStorage, sessionStorage, or third-party scripts. That is usually normal for modern web apps, but it also increases the amount of data that can be tracked or leaked if the page is compromised.',
+    },
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -641,7 +858,8 @@ export function WarningPanel({
             enabled: ext.enabled,
             riskScore: (ext.permissions?.length || 0) * 10,
             hasActivity: (response.activity || []).some((a: any) => a.extensionId === ext.id),
-            lastUsed: response.lastUsed
+            lastUsed: response.lastUsed,
+            isFromWebStore: ext.isFromWebStore ?? false
           })),
           sitePermissions: Array.from(siteMap.entries()).map(([origin, perms]) => ({
             origin,
@@ -720,11 +938,36 @@ export function WarningPanel({
   const pageMaxWeight = (pageSignals ?? []).reduce((m, s) => Math.max(m, s.weight ?? 0), 0);
   // "Serious" should be rare and clearly justified (phishing-ish, insecure transport, password capture, etc.)
   // Keep mild privacy/tracking findings (cookies/storage/third-party scripts) in the yellow banner.
-  const pageHasSeriousSignal = pageMaxWeight >= 50 || normPageScore < 40;
+  const pageHasSeriousSignal = pageMaxWeight >= 50 || normPageScore >= 40;
   const pageHasAnySignal = (pageSignals ?? []).length > 0;
+  const pageHasPrivacySurface = (pageSignals ?? []).some((s) =>
+    s.category === "Tracking & Storage" &&
+    [
+      "site_cookies_present",
+      "site_localstorage_present",
+      "site_sessionstorage_present",
+      "third_party_scripts_high",
+      "third_party_iframes",
+    ].includes(s.id),
+  );
+
+  const parseSignalCount = (signalId: string) => {
+    const signal = (pageSignals ?? []).find((s) => s.id === signalId);
+    if (!signal || typeof signal.message !== 'string') return 0;
+    const match = signal.message.match(/(\d+)/);
+    return match ? Number(match[1]) : 0;
+  };
+
+  const pageSummaryCounts = [
+    { label: 'Cookies', count: parseSignalCount('site_cookies_present') },
+    { label: 'LocalStorage', count: parseSignalCount('site_localstorage_present') },
+    { label: 'SessionStorage', count: parseSignalCount('site_sessionstorage_present') },
+    { label: '3rd-party scripts', count: parseSignalCount('third_party_scripts_high') },
+    { label: '3rd-party iframes', count: parseSignalCount('third_party_iframes') },
+  ].filter((item) => item.count > 0);
 
   const pageBanner = (() => {
-    if (!pageHasAnySignal && normPageScore >= 70) return null;
+    if (!pageHasAnySignal && normPageScore <= 10) return null;
 
     const items = pageTopSignals.map((s) => s.message).filter(Boolean);
     const highlights = items.length > 0 ? items.join(" · ") : "Some risky patterns were detected.";
@@ -818,7 +1061,7 @@ export function WarningPanel({
       {/* Top summary: overall score and quick status */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
         <div style={{ width: '100%', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #eef2ff' }}>
-          <div style={{ fontSize: '12px', color: '#6b7280' }}>Overall Security</div>
+          <div style={{ fontSize: '12px', color: '#6b7280' }}>Overall Risk</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
             <div style={{ fontSize: '20px', fontWeight: '700', color: overallCat.color }}>
               {normOverallScore}/100
@@ -828,6 +1071,50 @@ export function WarningPanel({
               <div style={{ fontSize: '12px', color: '#6b7280' }}>
                 Page: <strong>{pageCat.label} ({normPageScore})</strong> · Extension: <strong>{extensionCat.label} ({normExtensionScore})</strong>
               </div>
+              {pageSummaryCounts.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                  {pageSummaryCounts.map((item) => (
+                    <div
+                      key={item.label}
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #dbeafe',
+                        borderRadius: '999px',
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        color: '#1e3a8a',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {item.label}: {item.count}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {pageHasPrivacySurface ? (
+                <button
+                  onClick={() => setActiveInfoTopic(activeInfoTopic === 'privacySurface' ? null : 'privacySurface')}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '6px',
+                    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif',
+                    fontSize: '11px',
+                    lineHeight: 1.3,
+                    color: '#475569',
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    borderRadius: '999px',
+                    padding: '6px 10px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                  }}
+                >
+                  <span style={{ color: '#1d4ed8' }}>Privacy surface</span>
+                  <span style={{ fontWeight: 400 }}>Tap for details</span>
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -848,6 +1135,34 @@ export function WarningPanel({
             <div style={{ fontSize: '12px' }}>{pageBanner.body}</div>
           </div>
         )}
+
+      <div style={{ marginTop: '12px', width: '100%' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+          {Object.entries(INFO_TOPICS).map(([key, topic]) => (
+            <button
+              key={key}
+              onClick={() => setActiveInfoTopic(activeInfoTopic === key ? null : key)}
+              style={{
+                background: activeInfoTopic === key ? '#e5e7eb' : '#f8fafc',
+                border: '1px solid #d1d5db',
+                borderRadius: '999px',
+                padding: '8px 12px',
+                cursor: 'pointer',
+                color: '#111827',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+            >
+              {topic.label}
+            </button>
+          ))}
+        </div>
+        {activeInfoTopic ? (
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px', fontSize: '12px', color: '#111827' }}>
+            {INFO_TOPICS[activeInfoTopic].description}
+          </div>
+        ) : null}
+      </div>
       </div>
 
       {view === 'learn' ? (
@@ -987,21 +1302,7 @@ export function WarningPanel({
         </div>
       ) : (
         <>
-          <p>
-            Overall Risk: <strong>{overallCat.label}</strong>{" "}
-            <span className="guardian-panel__subtle">(score {normOverallScore})</span>
-          </p>
-      
-      <p className="guardian-panel__subtle">
-        Page: <strong>{pageCat.label}</strong> (score {normPageScore}) · Extension:{" "}
-        <strong>{extensionCat.label}</strong> (score {normExtensionScore})
-      </p>
-
-      <p className="guardian-panel__subtle">
-        Explains what looks risky. It does not block anything yet.
-      </p>
-
-      {behavior && (
+          {behavior && (
         <div className="guardian-panel__behavior">
           <h4>🧠 Behavior Analysis</h4>
           <p>
@@ -1045,7 +1346,13 @@ export function WarningPanel({
                 .slice(-10)
                 .reverse()
                 .map((act) =>
-                  formatActivity(act.type, act.detail, { resolveExtensionName }),
+                  formatActivity(act.type, act.detail, {
+                    resolveExtensionName,
+                    isWebStoreExtension: (id: string) => {
+                      const ext = dashboardData?.extensionSummary?.find((e) => e.id === id);
+                      return ext?.isFromWebStore ?? false;
+                    }
+                  }),
                 );
 
               const grouped: Array<{ item: ReturnType<typeof formatActivity>; count: number }> = [];
@@ -1306,6 +1613,65 @@ export function WarningPanel({
       )}
         </>
       )}
+
+      <div
+        style={{
+          marginTop: '16px',
+          paddingTop: '10px',
+          borderTop: '1px solid #e5e7eb',
+          fontSize: '11px',
+          color: '#6b7280',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '6px',
+            alignItems: 'center',
+          }}
+        >
+          <span>Open Source</span>
+          <span>•</span>
+          <span>Local Analysis Only</span>
+          <span>•</span>
+          <span>No Data Collection</span>
+        </div>
+
+        <div
+          style={{
+            marginTop: '6px',
+            display: 'flex',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <a
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              color: '#2563eb',
+              textDecoration: 'none',
+              fontWeight: 600,
+            }}
+          >
+            GitHub Repository
+          </a>
+          <a
+            href={SUPPORT_DEVELOPMENT_URL}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              color: '#2563eb',
+              textDecoration: 'none',
+              fontWeight: 600,
+            }}
+          >
+            Support Development
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4,16 +4,42 @@ export function calculateRisk(signals: RiskSignal[]): {
   score: number;
   level: RiskLevel;
 } {
-  // Convert "risk weight" into a 0..100 "safety score" where 100 is safest.
-  // Exponential decay keeps the score meaningful even when many signals stack up.
-  const totalWeight = signals.reduce((sum, s) => sum + (Number.isFinite(s.weight) ? s.weight : 0), 0);
-  const score = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-totalWeight / 100))));
+  if (!signals || signals.length === 0) {
+    return { score: 0, level: "low" };
+  }
+
+  const categoryCaps: Record<string, number> = {
+    "Sensitive Data": 80,
+    "Website Security": 90,
+    "Tracking & Storage": 20,
+    "Website Reputation": 40,
+  };
+
+  const categoryModifiers: Record<string, number> = {
+    "Tracking & Storage": 0.6,
+  };
+
+  const categoryTotals: Record<string, number> = {};
+  signals.forEach((signal) => {
+    const category = signal.category || "Tracking & Storage";
+    const weight = Number.isFinite(signal.weight) ? signal.weight : 0;
+    categoryTotals[category] = (categoryTotals[category] ?? 0) + weight;
+  });
+
+  let rawRisk = 0;
+  for (const category in categoryTotals) {
+    const totalWeight = categoryTotals[category];
+    const cappedWeight = Math.min(totalWeight, categoryCaps[category] ?? 30);
+    const modifier = categoryModifiers[category] ?? 1;
+    rawRisk += cappedWeight * modifier;
+  }
+
+  rawRisk = Math.max(0, rawRisk);
+  const score = Math.max(0, Math.min(100, Math.round(rawRisk)));
 
   let level: RiskLevel = "low";
-
-  if (score < 30) level = "critical";
-  else if (score < 50) level = "high";
-  else if (score < 70) level = "medium";
+  if (score > 40) level = "high";
+  else if (score > 15) level = "medium";
 
   return { score, level };
 }

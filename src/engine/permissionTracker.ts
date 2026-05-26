@@ -13,19 +13,38 @@ export function initPermissionTracker() {
   // 1) Ask the background service worker to inject the proxy into the MAIN world
   // using `chrome.scripting.executeScript`. This avoids CSP violations on sites that
   // block inline `<script>` execution.
-  runtime?.sendMessage?.({ type: 'PG_INJECT_PERMISSION_PROXY' });
+  try {
+    runtime?.sendMessage?.({ type: 'PG_INJECT_PERMISSION_PROXY' });
+  } catch (error) {
+    console.debug('[PG] Failed to request permission proxy injection (context may be invalidated):', error);
+  }
 
   // 2) Listen for messages from the injected proxy
   window.addEventListener('message', (event) => {
-    if (event.source !== window || event.data?.type !== 'PG_PERMISSION_REQUEST') return;
-    
+    // Ignore unrelated postMessage traffic
+    if (event.source !== window) return;
+
+    // If the extension was reloaded, accessing runtime.id can throw "Extension context invalidated"
+    try {
+      if (!runtime?.id) return;
+    } catch {
+      return; // Context invalidated, ignore subsequent proxy events
+    }
+
+    if (!event.data || typeof event.data !== 'object') return;
+
     const { permission, action, origin, responseTime } = event.data;
+    if (typeof permission !== 'string' || typeof action !== 'string') return;
     
     // Send to background for persistent logging and analysis
-    runtime?.sendMessage?.({
-      type: 'LOG_PERMISSION_REQUEST',
-      payload: { permission, action, origin, timestamp: Date.now(), responseTime }
-    });
+    try {
+      runtime?.sendMessage?.({
+        type: 'LOG_PERMISSION_REQUEST',
+        payload: { permission, action, origin, timestamp: Date.now(), responseTime }
+      });
+    } catch (error) {
+      console.debug('[PG] Failed to log permission request (context may be invalidated):', error);
+    }
 
     storage?.get?.(['pg_mode'], (result: any) => {
       const mode = result?.pg_mode || 'balanced';

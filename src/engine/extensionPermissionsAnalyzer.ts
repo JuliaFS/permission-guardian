@@ -116,7 +116,7 @@ export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
     return [
       {
         id: "ext_self_exclusion",
-        message: "You are protected! These are Permission Guardian's permissions, required to keep you safe in real time.",
+        message: "This is Permission Guardian itself. These permissions are used to observe and learn site behavior, not to guarantee instant protection for the user.",
         weight: 0,
         category: "Extension Permission",
         severity: "low",
