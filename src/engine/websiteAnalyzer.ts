@@ -1,16 +1,17 @@
 import type { RiskSignal } from "./types";
 
-// Топ брандове, които най-често биват имитирани от фишинг сайтове
+// Top brands that are commonly impersonated by phishing sites
 const TOP_BRANDS = [
   "google.com", "facebook.com", "amazon.com", "apple.com", "microsoft.com",
   "paypal.com", "netflix.com", "instagram.com", "linkedin.com", "twitter.com"
 ];
 
-// Подозрителни безплатни или евтини топ-левъл домейни (TLDs)
+// Suspicious free/cheap top-level domains (TLDs) often used for spam/phishing
 const SUSPICIOUS_TLDS = [".top", ".xyz", ".club", ".live", ".click", ".info", ".gq", ".tk", ".ml"];
 
 /**
- * Изчислява дистанцията на Левенщайн между два стринга (колко промени са нужни, за да съвпаднат).
+ * Computes the Levenshtein distance between two strings
+ * (how many edits are required to transform one into the other).
  */
 function getLevenshteinDistance(a: string, b: string): number {
   const tmp = [];
@@ -40,42 +41,42 @@ export function analyzeWebsite(url: string, options?: { knownPhishing?: boolean 
     if (urlObj.protocol === "http:") {
       signals.push({
         id: "website_http_connection",
-        message: "Връзката не е шифрирана (HTTP). Сайтът може да подслушва данните ви.",
+        message: "Connection is not encrypted (HTTP). The site traffic can be intercepted or modified.",
         weight: 35,
         category: "Website Security",
       });
     }
 
-    // 2. Структурен анализ (Замества Domain Age симулацията)
-    // Фишинг сайтовете често имат твърде много субдомейни или тирета
+    // 2. Structural analysis (lightweight heuristic)
+    // Phishing sites often use too many subdomains or hyphens.
     const dashCount = (hostname.match(/-/g) || []).length;
     const dotCount = (hostname.match(/\./g) || []).length;
 
     if (dashCount > 3 || dotCount > 4) {
       signals.push({
         id: "website_suspicious_structure",
-        message: "Структурата на линка изглежда необичайно дълга и подозрителна.",
+        message: "The hostname structure looks unusually long or complex, which can be a phishing indicator.",
         weight: 45,
         category: "Website Reputation",
       });
     }
 
-    // Проверка за евтини/опасни TLDs
+    // Check for risky TLDs
     if (SUSPICIOUS_TLDS.some(tld => hostname.endsWith(tld))) {
       signals.push({
         id: "website_risky_tld",
-        message: "Сайтът използва домейни с ниска репутация, често ползвани за спам.",
+        message: "This site uses a low-reputation TLD that is often abused for spam/phishing.",
         weight: 25,
         category: "Website Reputation",
       });
     }
 
-    // 3. Динамичен Тайпоскуотинг чрез Левенщайн (Несимулиран)
+    // 3. Typosquatting detection using Levenshtein distance
     for (const brand of TOP_BRANDS) {
-      if (hostname === brand) break; // Сайтът е истинският бранд
+      if (hostname === brand) break; // The site is the real brand domain
 
-      // Ако името силно прилича на известен бранд (дистанция 1 или 2 букви разлика)
-      // Пример: "g00gle.com" или "googly.com"
+      // If the name is very close to a popular brand (distance 1–2 edits),
+      // it can be an impersonation attempt (e.g. "g00gle.com", "googly.com").
       const distance = getLevenshteinDistance(hostname, brand);
       if (distance > 0 && distance <= 2) {
         signals.push({
@@ -87,7 +88,7 @@ export function analyzeWebsite(url: string, options?: { knownPhishing?: boolean 
         break;
       }
 
-      // Проверка за поддомейн капан: напр. "paypal.com.fake-site.com"
+      // Check for a subdomain trap, e.g. "paypal.com.fake-site.com"
       if (hostname.includes(brand) && !hostname.endsWith("." + brand)) {
         signals.push({
           id: "website_brand_spoofing",
@@ -142,7 +143,7 @@ export function analyzeWebsite(url: string, options?: { knownPhishing?: boolean 
     }
 
   } catch (error) {
-    console.error("Грешка при анализа на URL:", error);
+    console.error("Error while analyzing URL:", error);
   }
 
   return signals;

@@ -6,7 +6,7 @@ const DANGEROUS_PERMISSIONS: Array<{
   weight: number;
   message: string;
 }> = [
-  // Add modern Chrome MV3 critical permissions and localized detection for Bulgarian descriptions
+  // Add modern Chrome MV3 critical permissions
   {
     id: "ext_perm_proxy",
     permission: "proxy",
@@ -33,20 +33,20 @@ const DANGEROUS_PERMISSIONS: Array<{
   }
 ];
 
-// Extend the keyword dictionary with Bulgarian terms so description-based matching works for localized extensions
+// Keywords used to estimate whether a permission matches the extension's stated purpose.
 const keywordsByPermission: Record<string, string[]> = {
-  tabs: ["tab", "tabs", "productivity", "session", "organize", "workspace", "таб", "табове", "раздел"],
-  cookies: ["cookie", "login", "auth", "session", "privacy", "tracking", "бисквитки", "вход"],
-  webRequest: ["request", "network", "proxy", "adblock", "block", "security", "мрежа", "заявка"],
-  history: ["history", "visited", "bookmark", "search", "recommend", "история", "отваряни"],
-  activeTab: ["tab", "page", "site", "current", "analyze", "scan", "текущ", "страница"],
-  clipboardRead: ["clipboard", "paste", "copy", "password", "security", "клипборд", "копиране", "парола"],
-  clipboardWrite: ["clipboard", "copy", "paste", "format", "клипборд", "запис"],
-  scripting: ["inject", "script", "content", "page", "analyze", "scan", "скрипт", "код"],
-  proxy: ["proxy", "vpn", "network", "traffic", "прокси", "трафик"],
-  storage: ["storage", "local storage", "data", "cache", "save", "sync", "съхранение", "локално", "данни", "кеш", "синхронизиране"],
-  declarativeNetRequest: ["block", "adblock", "request", "filter", "блокер", "филтър"],
-  declarativeNetRequestFeedback: ["block", "adblock", "request", "filter", "feedback", "report", "блокер", "филтър", "доклад", "обратно"]
+  tabs: ["tab", "tabs", "productivity", "session", "organize", "workspace"],
+  cookies: ["cookie", "login", "auth", "session", "privacy", "tracking"],
+  webRequest: ["request", "network", "proxy", "adblock", "block", "security"],
+  history: ["history", "visited", "bookmark", "search", "recommend"],
+  activeTab: ["tab", "page", "site", "current", "analyze", "scan"],
+  clipboardRead: ["clipboard", "paste", "copy", "password", "security"],
+  clipboardWrite: ["clipboard", "copy", "paste", "format"],
+  scripting: ["inject", "script", "content", "page", "analyze", "scan"],
+  proxy: ["proxy", "vpn", "network", "traffic"],
+  storage: ["storage", "local storage", "data", "cache", "save", "sync"],
+  declarativeNetRequest: ["block", "adblock", "request", "filter"],
+  declarativeNetRequestFeedback: ["block", "adblock", "request", "filter", "feedback", "report"]
 };
 
 type ManifestLike = {
@@ -132,7 +132,7 @@ export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
   const hasAllUrls = hostPatterns.includes("<all_urls>") || hostPatterns.includes("*://*/*");
   const hasActiveTab = permissions.includes("activeTab");
 
-  // УМНА КОРЕКЦИЯ: Ако разширението иска достъп до ВСИЧКИ сайтове
+  // If the extension requests access to ALL sites, treat it as higher risk.
   if (hasAllUrls) {
     signals.push({
       id: "ext_host_all_urls",
@@ -141,16 +141,16 @@ export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
       category: "Extension Host Access",
     });
   } else if (hasActiveTab) {
-    // Обучителен елемент: Обясняваме, че това е добра и сигурна практика
+    // Educational: activeTab-only access is usually a safer pattern.
     signals.push({
       id: "ext_host_secure_activetab",
       message: "The extension only accesses sites after you explicitly click its icon. (Good security practice)",
-      weight: 5, // Много нисък риск
+      weight: 5, // Very low risk
       category: "Extension Host Access",
     });
   }
 
-  // Background scripts / service worker (Специфика за MV2 срещу MV3)
+  // Background scripts / service worker (MV2 vs MV3 differences)
   if (manifest.background?.service_worker) {
     signals.push({
       id: "ext_background_service_worker",
@@ -160,7 +160,7 @@ export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
     });
   }
   
-  // Постоянен фон (MV2 остатък, много опасен за проследяване)
+  // Persistent background page (MV2 legacy; higher tracking risk)
   if (manifest.background?.persistent === true) {
     signals.push({
       id: "ext_background_persistent",
@@ -170,14 +170,14 @@ export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
     });
   }
 
-  // Проверка на опасните пермишъни
+  // Check dangerous permissions
   for (const def of DANGEROUS_PERMISSIONS) {
     if (!permissions.includes(def.permission)) continue;
 
-    // Специфична проверка: Ако имаме <all_urls>, някои права стават двойно по-опасни!
+    // If the extension also has <all_urls>, some permissions become even riskier.
     let finalWeight = def.weight;
     if (hasAllUrls && ["cookies", "scripting", "webRequest"].includes(def.permission)) {
-      finalWeight += 15; // Повишаваме риска, защото правото важи за ЦЕЛИЯ интернет
+      finalWeight += 15; // Higher risk because it applies across the entire web
     }
 
     signals.push({
@@ -187,7 +187,7 @@ export function analyzeExtensionManifest(manifest: ManifestLike): RiskSignal[] {
       category: "Extension Permission",
     });
 
-    // Проверка за съответствие с целта
+    // Purpose mismatch warning
     if (!seemsToNeedPermission(purpose, def.permission)) {
       signals.push({
         id: `${def.id}_mismatch`,

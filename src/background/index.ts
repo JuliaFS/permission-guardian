@@ -65,7 +65,7 @@ async function updatePhishingListsIfNeeded(force = false) {
   }
 }
 
-// Хелпър за съхранение
+// Storage helper
 async function getStorageValue<T>(key: string, fallback: T): Promise<T> {
   const result = await api.storage.local.get([key]);
   return result[key] ?? fallback;
@@ -75,7 +75,7 @@ async function setStorageValue(key: string, value: unknown) {
   await api.storage.local.set({ [key]: value });
 }
 
-// Автоматично инжектиране при зареждане на нов сайт
+// Auto-inject when a new site finishes loading
 api.tabs.onUpdated.addListener((tabId: number, changeInfo: any, tab: any) => {
   if (changeInfo.status === 'complete' && tab.url && !isRestrictedUrl(tab.url)) {
     injectProxy(tabId);
@@ -142,15 +142,15 @@ async function injectProxy(tabId: number) {
   try {
     await api.scripting.executeScript({
       target: { tabId },
-      world: 'MAIN', // ВАЖНО: Трябва да е в MAIN, за да достъпим обекта navigator
-      files: ['scripts/inject.js'] // Файлът, съдържащ кода за прихващане
+      world: 'MAIN', // IMPORTANT: Must run in MAIN to access page globals like `navigator`
+      files: ['scripts/inject.js'] // Script that hooks page APIs and emits runtime signals
     });
   } catch (e) {
     console.debug('[PG] Injection skipped:', e);
   }
 }
 
-// Слушател за съобщения от Content Script
+// Message listener from the content script
 api.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: any) => {
   if (message.type === 'LOG_PERMISSION_REQUEST') {
     handlePermissionLog(message.payload);
@@ -181,7 +181,7 @@ async function handlePermissionLog(log: any) {
   // Legacy throttling for cookie reads
   if (log.permission === 'cookie read') {
     const lastLog = history.reverse().find(i => i.origin === log.origin && i.permission === 'cookie read');
-    if (lastLog && Date.now() - lastLog.timestamp < 10000) return; // макс веднъж на 10 сек
+    if (lastLog && Date.now() - lastLog.timestamp < 10000) return; // max once per 10 seconds
   }
 
   history.push({ ...log, timestamp: Date.now() });
